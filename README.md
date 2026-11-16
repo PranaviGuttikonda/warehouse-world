@@ -164,11 +164,16 @@ Conflict-based search (CBS), which plans robots jointly, is the next step.
 
 ## Roadmap
 
-- [x] **Phase 1, core engine:** grid, ECS, fixed timestep, collision-free local movement, terminal view, tests
-- [x] **Graphical viewer:** raylib, desktop and WebAssembly
-- [ ] **Phase 2, warehouse brain:** beat the baseline above
-  - [x] A*
-  - [x] Space-time A* with a reservation table
-  - [ ] Conflict-based search (CBS)
-  - [ ] Smarter task assignment
-- [ ] **Phase 3, authoritative server:** sim runs as a server, streams state over TCP at a fixed tick rate; viewer and order-injection clients
+The engine stays a general multi-agent path finding sim; its showcase is
+becoming a game, Rush Hour Café (robot waiters, kitchen counter, tables).
+See [docs/VISION.md](docs/VISION.md).
+
+- [x] Core engine: grid, ECS, fixed timestep, local movement, terminal view, tests
+- [x] Graphical viewer: raylib, desktop and WebAssembly
+- [x] A*
+- [x] Space-time A* with planner buttons
+- [ ] Conflict-based search (CBS)
+- [ ] Café theme + map editor
+- [ ] One-way aisles
+- [ ] Challenge levels
+- [ ] Web deploy
