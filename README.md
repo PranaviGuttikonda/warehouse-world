@@ -1,7 +1,10 @@
 # warehouse-world
 
+![Robots moving between shelves and packing stations in the graphical viewer](docs/viewer.gif)
+
 A grid warehouse where robots pick items from shelves and deliver them to
-packing stations without colliding. Written in C++20 with no dependencies.
+packing stations without colliding. The core is C++20 with no dependencies;
+the optional graphical viewer uses [raylib](https://www.raylib.com).
 
 ```
 #S...........le.........S#      lowercase  robot heading to a shelf
@@ -28,6 +31,39 @@ cmake --build build -j
 ./build/warehouse --headless --robots 16 --ticks 200000   # benchmark
 ```
 
+### Graphical viewer
+
+The viewer is opt-in, because configuring it downloads raylib 5.5 (pinned by
+hash) on the first run.
+
+```sh
+cmake -S . -B build -DWW_VIEWER=ON
+cmake --build build -j
+./build/viewer                           # purple = to shelf, coral = carrying
+./build/viewer --robots 24 --hz 15 --seed 3
+./build/viewer --record docs/viewer.gif  # re-record the GIF above
+```
+
+Keys: <kbd>space</kbd> pause, <kbd>+</kbd>/<kbd>-</kbd> speed,
+<kbd>↑</kbd>/<kbd>↓</kbd> robot count (restarts the run with the same seed).
+The HUD shows the tick, deliveries per minute at the current speed (over
+the last 10 s) and how many robots are blocked. On Linux, raylib also needs
+the X11 and OpenGL development packages.
+
+### In the browser (WebAssembly)
+
+Needs [Emscripten](https://emscripten.org) (`brew install emscripten`, or
+emsdk). Tests and the terminal app are skipped in this build.
+
+```sh
+emcmake cmake -S . -B build-web -DWW_VIEWER=ON
+cmake --build build-web -j --target viewer
+python3 -m http.server -d build-web 8000  # open http://localhost:8000/viewer.html
+```
+
+The output is `viewer.html`, `viewer.js` and `viewer.wasm`; any static file
+host can serve them.
+
 ## How it works
 
 | Piece | File | What it does |
@@ -38,6 +74,7 @@ cmake --build build -j
 | Fixed timestep | `timestep.hpp` | Accumulator loop: sim ticks at a constant rate, independent of frame rate, with a catch-up cap |
 | Movement | `systems.cpp` | One cell per tick along a cached BFS distance field; reservation rule prevents overlaps and head-on swaps |
 | Tasks | `systems.cpp` | Shelf face → station → new task; counts deliveries |
+| Viewer | `apps/viewer.cpp` | raylib window or WebAssembly page; robots move smoothly between cells using `FixedTimestep::alpha()` |
 | Simulation | `simulation.hpp` | Owns the world, runs systems in order, validates invariants |
 
 Same seed, same run: the simulation is fully deterministic, on every
@@ -65,5 +102,6 @@ the RNG is now portable (`random.hpp`), so these numbers reproduce anywhere.
 ## Roadmap
 
 - [x] **Phase 1, core engine:** grid, ECS, fixed timestep, collision-free local movement, terminal view, tests
+- [x] **Graphical viewer:** raylib, desktop and WebAssembly
 - [ ] **Phase 2, warehouse brain:** A*, space-time A* with reservations, conflict-based search (CBS), smarter task assignment; beat the baseline above
 - [ ] **Phase 3, authoritative server:** sim runs as a server, streams state over TCP at a fixed tick rate; viewer and order-injection clients

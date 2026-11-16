@@ -23,6 +23,37 @@ add_executable(warehouse apps/main.cpp)
 target_link_libraries(warehouse PRIVATE ww_core)
 target_compile_options(warehouse PRIVATE -Wall -Wextra -Wpedantic)
 
+# Graphical viewer: opt-in so the default build needs no downloads.
+# Given: raylib from FetchContent, pinned. Approach: build it static next to
+# the viewer; under Emscripten build raylib for the web and emit viewer.html.
+option(WW_VIEWER "Build the raylib graphical viewer (downloads raylib)" OFF)
+if(WW_VIEWER)
+  include(FetchContent)
+  set(BUILD_EXAMPLES OFF CACHE BOOL "" FORCE)
+  set(BUILD_SHARED_LIBS OFF CACHE BOOL "" FORCE)
+  if(EMSCRIPTEN)
+    set(PLATFORM Web CACHE STRING "" FORCE)
+  endif()
+  FetchContent_Declare(raylib
+    URL https://github.com/raysan5/raylib/archive/refs/tags/5.5.tar.gz
+    URL_HASH SHA256=aea98ecf5bc5c5e0b789a76de0083a21a70457050ea4cc2aec7566935f5e258e
+    DOWNLOAD_EXTRACT_TIMESTAMP TRUE)
+  FetchContent_MakeAvailable(raylib)
+
+  add_executable(viewer apps/viewer.cpp)
+  target_link_libraries(viewer PRIVATE ww_core raylib)
+  target_compile_options(viewer PRIVATE -Wall -Wextra)
+  if(EMSCRIPTEN)
+    set_target_properties(viewer PROPERTIES SUFFIX ".html")
+    target_link_options(viewer PRIVATE -sUSE_GLFW=3 -sALLOW_MEMORY_GROWTH=1
+      --shell-file ${CMAKE_SOURCE_DIR}/apps/viewer_shell.html)
+  endif()
+endif()
+
+if(EMSCRIPTEN)
+  return()  # tests and the terminal app are native-only
+endif()
+
 enable_testing()
 add_executable(ww_tests
   tests/test_main.cpp
