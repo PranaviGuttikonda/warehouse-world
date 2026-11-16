@@ -94,6 +94,18 @@ int runHeadless(ww::Simulation& sim, long long ticks) {
     return problem.empty() ? 0 : 2;
 }
 
+// Given: text with '\n' line ends. Approach: insert \033[K (clear to end of
+// line) before each newline so shorter lines erase the previous frame's.
+std::string clearLineEnds(const std::string& text) {
+    std::string out;
+    out.reserve(text.size() + text.size() / 16);
+    for (char ch : text) {
+        if (ch == '\n') out += "\033[K";
+        out += ch;
+    }
+    return out;
+}
+
 int runLive(ww::Simulation& sim, const Options& o) {
     using clock = std::chrono::steady_clock;
     ww::FixedTimestep timestep(1.0 / o.hz);
@@ -107,9 +119,11 @@ int runLive(ww::Simulation& sim, const Options& o) {
         double elapsed = std::chrono::duration<double>(now - last).count();
         last = now;
         if (timestep.advance(elapsed, [&] { sim.step(); }) > 0) {
-            std::cout << "\033[H" << ww::renderFrame(sim, o.color)
-                      << "lowercase = to shelf, UPPERCASE = carrying.  Ctrl-C to quit.\n"
-                      << std::flush;
+            // Home, draw, then \033[J clears anything left below the frame.
+            std::cout << "\033[H"
+                      << clearLineEnds(ww::renderFrame(sim, o.color) +
+                                       "lowercase = to shelf, UPPERCASE = carrying.  Ctrl-C to quit.\n")
+                      << "\033[J" << std::flush;
         }
         std::this_thread::sleep_for(frame);
     }
