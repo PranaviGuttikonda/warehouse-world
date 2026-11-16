@@ -34,24 +34,33 @@ cmake --build build -j
 |---|---|---|
 | Grid | `grid.hpp` | Parses an ASCII map; knows walls, shelves, stations, pick faces |
 | ECS | `ecs.hpp` | Sparse-set component pools; dense arrays, O(1) add/remove |
+| Random | `random.hpp` | Portable Fisher–Yates shuffle and uniform ints on `mt19937_64` |
 | Fixed timestep | `timestep.hpp` | Accumulator loop: sim ticks at a constant rate, independent of frame rate, with a catch-up cap |
 | Movement | `systems.cpp` | One cell per tick along a cached BFS distance field; reservation rule prevents overlaps and head-on swaps |
 | Tasks | `systems.cpp` | Shelf face → station → new task; counts deliveries |
 | Simulation | `simulation.hpp` | Owns the world, runs systems in order, validates invariants |
 
-Same seed, same run: the simulation is fully deterministic.
+Same seed, same run: the simulation is fully deterministic, on every
+platform.
 
 ## Phase 1 baseline (local collision avoidance only)
 
-Deliveries in 20,000 ticks on the default map (seed 42):
+Deliveries in 20,000 ticks on the default map, over seeds 1–5
+(`scripts/bench.sh`):
 
 | Robots | 4 | 8 | 12 | 16 | 20 | 24 | 28 | 32 | 40 |
 |---|---|---|---|---|---|---|---|---|---|
-| Deliveries | 2258 | 3669 | 4127 | **4758** | 4044 | 4203 | 428 | 2835 | 139 |
+| Mean | 1872 | 3624 | 4029 | 4545 | 4037 | 3638 | 1973 | 1283 | 985 |
+| Min-max | 846-2223 | 3592-3683 | 3818-4390 | 4349-4645 | 3011-4561 | 1920-4289 | 310-3750 | 146-2475 | 631-1872 |
 
-Throughput peaks around 16 robots and then collapses. Each robot plans
-alone and only reacts to its neighbours, so crowded aisles gridlock. Fixing
-that is the point of phase 2.
+Throughput peaks around 16 robots and then collapses, and past 20 robots
+the outcome swings widely with the seed. Each robot plans alone and only
+reacts to its neighbours, so crowded aisles gridlock. Fixing that is the
+point of phase 2.
+
+Earlier versions of this table used `std::shuffle` and
+`std::uniform_int_distribution`, which differ between standard libraries;
+the RNG is now portable (`random.hpp`), so these numbers reproduce anywhere.
 
 ## Roadmap
 

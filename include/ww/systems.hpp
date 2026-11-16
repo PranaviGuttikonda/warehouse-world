@@ -1,16 +1,14 @@
 #pragma once
 
-#include <random>
 #include <unordered_map>
 #include <vector>
 
 #include "ww/components.hpp"
 #include "ww/ecs.hpp"
 #include "ww/grid.hpp"
+#include "ww/random.hpp"
 
 namespace ww {
-
-using Rng = std::mt19937_64;
 
 struct Stats {
     long long ticks = 0;
