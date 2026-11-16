@@ -22,6 +22,8 @@ between planners is easy to see.
 
 Cozy console-game style, all original art.
 
+![The café in the viewer: robot waiters, tables with seated customers and order bubbles, the kitchen counter](cafe.png)
+
 - Chunky dark outlines (`#3B2A20`) and a checkered warm floor (`#FFE9C7` / `#FFDDB0`).
 - Red kitchen counter (`#E85D4A`), white round tables, potted plants (`#5CC15C`) as obstacles.
 - Robot waiters: rounded blue bodies (`#4FC3F7`) with eyes, a smile and an antenna; a plate of food sits on top while carrying.

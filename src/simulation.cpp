@@ -69,7 +69,13 @@ std::vector<RobotView> Simulation::robots() const {
     for (Entity e : reg.pool<Robot>().entities()) {
         const Task& t = reg.get<Task>(e);
         const Robot& r = reg.get<Robot>(e);
-        out.push_back({r.id, reg.get<Position>(e).cell, t.goal(), t.carrying(), r.waitTicks});
+        std::vector<Cell> route;
+        if (reg.pool<Plan>().has(e)) {
+            const Plan& plan = reg.get<Plan>(e);
+            const auto k = static_cast<std::size_t>(std::max(0LL, stats_.ticks - plan.start));
+            if (k < plan.path.size()) route.assign(plan.path.begin() + static_cast<std::ptrdiff_t>(k), plan.path.end());
+        }
+        out.push_back({r.id, reg.get<Position>(e).cell, t.goal(), t.dropoff, t.carrying(), r.waitTicks, std::move(route)});
     }
     std::sort(out.begin(), out.end(), [](const RobotView& a, const RobotView& b) { return a.id < b.id; });
     return out;

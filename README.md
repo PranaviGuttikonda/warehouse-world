@@ -1,10 +1,15 @@
 # warehouse-world
 
-![Robots moving between shelves and packing stations in the graphical viewer](docs/viewer.gif)
+![Robot waiters carrying plates from the kitchen counter to café tables](docs/viewer.gif)
 
-A grid warehouse where robots pick items from shelves and deliver them to
-packing stations without colliding. The core is C++20 with no dependencies;
+A multi-agent path finding sim: robots pick items up and deliver them
+without colliding, using one of three planners (local rules, space-time
+A*, conflict-based search). Its showcase is **Rush Hour Café**, where robot
+waiters carry orders from one kitchen counter to the tables
+([docs/VISION.md](docs/VISION.md)). The core is C++20 with no dependencies;
 the optional graphical viewer uses [raylib](https://www.raylib.com).
+
+The terminal view and the benchmarks below use the warehouse map:
 
 ```
 #S...........le.........S#      lowercase  robot heading to a shelf
@@ -45,10 +50,21 @@ hash) on the first run.
 ```sh
 cmake -S . -B build -DWW_VIEWER=ON
 cmake --build build -j
-./build/viewer                           # purple = to shelf, coral = carrying
-./build/viewer --robots 40 --hz 15 --seed 3 --planner cbs
-./build/viewer --robots 40 --planner cbs --record docs/viewer.gif --frames 180  # the GIF above
+./build/viewer                           # the café, 16 robots
+./build/viewer --robots 32 --hz 15 --seed 3 --planner cbs
+./build/viewer --map warehouse           # the benchmark map, same theme
+./build/viewer --robots 24 --planner cbs --record docs/viewer.gif --frames 88 --fps 15  # the GIF above
 ```
+
+How to read it:
+- A **bubble** over a table is an order, with customers seated on its chairs. A
+  red badge counts orders.
+- A **bowl on the counter** marks an order ready for pickup, and the mats below
+  are the pickup cells.
+- A robot **holding a tray** is carrying an order. A dotted line in its colour
+  leads to the table, following its planned path where there is one, and the
+  bubble's outline takes the same colour.
+- "+1" and a star pop up at each delivery.
 
 The bottom bar has buttons for everything, so the browser build works
 without a keyboard: pause, speed −/+, robot count −/+, and one button per
@@ -56,8 +72,8 @@ planner (the active one is highlighted). Changing the planner or robot count
 restarts the run with the same seed, so comparisons are fair. Keys do the
 same: <kbd>space</kbd> pause, <kbd>+</kbd>/<kbd>-</kbd> speed,
 <kbd>↑</kbd>/<kbd>↓</kbd> robots, <kbd>P</kbd> next planner. The HUD shows
-the tick, deliveries per minute at the current speed (over the last 10 s)
-and how many robots are blocked. On Linux, raylib also needs
+orders served, orders per minute at the current speed (over the last
+10 s), robots stuck (blocked 3+ ticks in a row) and the tick. On Linux, raylib also needs
 the X11 and OpenGL development packages.
 
 ### In the browser (WebAssembly)
@@ -78,7 +94,7 @@ host can serve them.
 
 | Piece | File | What it does |
 |---|---|---|
-| Grid | `grid.hpp` | Parses an ASCII map; knows walls, shelves, stations, pick faces |
+| Grid | `grid.hpp` | Parses an ASCII map; knows walls, shelves (counter), stations, tables, plants, pick faces; built-in `warehouse` and `cafe` maps |
 | ECS | `ecs.hpp` | Sparse-set component pools; dense arrays, O(1) add/remove |
 | Random | `random.hpp` | Portable Fisher–Yates shuffle and uniform ints on `mt19937_64` |
 | Fixed timestep | `timestep.hpp` | Accumulator loop: sim ticks at a constant rate, independent of frame rate, with a catch-up cap |
@@ -88,7 +104,7 @@ host can serve them.
 | Space-time A* | `stastar.hpp` | `--planner stastar`: A* over (cell, tick) against the reservation table; replans on a new goal |
 | CBS | `cbs.hpp` | `--planner cbs`: windowed conflict-based search, all robots planned jointly; replans on any new goal |
 | Tasks | `systems.cpp` | Shelf face → station → new task; counts deliveries |
-| Viewer | `apps/viewer.cpp` | raylib window or WebAssembly page; robots move smoothly between cells using `FixedTimestep::alpha()` |
+| Viewer | `apps/viewer.cpp` | Rush Hour Café theme in a raylib window or WebAssembly page; robots move smoothly between cells using `FixedTimestep::alpha()` |
 | Simulation | `simulation.hpp` | Owns the world, runs systems in order, validates invariants |
 
 Same seed, same run: the simulation is fully deterministic, on every
@@ -210,6 +226,52 @@ How it works (`cbs.hpp`):
   at a time: each avoids the paths before it and the cells of the robots
   after it, so everyone can at least wait. It is always conflict-free,
   just conservative; it ran in under 0.1% of solves at 40 robots.
+
+## The café map
+
+```
+##########################      =  kitchen counter (pickup from the floor below it)
+#*....==============....*#      0  table (drop-off from any side)
+#........................#      *  potted plant
+#........................#
+#...0.....0....0.....0...#
+#........................#
+#*.....0.....**.....0...*#
+#........................#
+#...0.....0....0.....0...#
+#........................#
+#*..........**..........*#
+##########################
+```
+
+Every order starts at the one counter along the top wall: 16 pickup cells
+for up to 40 robots, against 40 drop-off cells around ten tables. Use it
+with `--map cafe` (the viewer's default). Deliveries in 20,000 ticks, over
+seeds 1–5 (`scripts/bench.sh --map cafe --planner …`):
+
+| Robots | 4 | 8 | 12 | 16 | 20 | 24 | 28 | 32 | 40 |
+|---|---|---|---|---|---|---|---|---|---|
+| Local | 2875 | 5206 | 5785 | 4726 | 3192 | 2097 | 1345 | 1075 | 500 |
+| Local, min-max | 1418-3344 | 5182-5248 | 5710-5849 | 4390-4916 | 2942-3401 | 1918-2407 | 1280-1390 | 1011-1108 | 334-611 |
+| Space-time A\* | 3687 | 7278 | 10695 | 13978 | 17049 | 19935 | 22573 | 23589 | 154 |
+| Space-time A\*, min-max | 3662-3719 | 7253-7297 | 10646-10734 | 13943-14024 | 17008-17079 | 19907-19970 | 22522-22607 | 23520-23687 | 113-208 |
+| **CBS** | **3697** | **7341** | **10916** | **14369** | **17683** | **20793** | **23630** | **26185** | **29597** |
+| CBS, min-max | 3656-3748 | 7303-7365 | 10867-10959 | 14318-14465 | 17607-17749 | 20745-20835 | 23547-23746 | 26107-26252 | 29505-29637 |
+
+Trips are shorter than in the warehouse, so every planner delivers more at
+low counts, but the counter changes the shape of the curves:
+
+- **Local** peaks at 12 robots and then collapses as robots queue at the
+  counter: 40 robots deliver less than 4.
+- **CBS** keeps scaling almost linearly to 40 robots (29,597), with all five
+  seeds within 0.5% of each other.
+- **Space-time A\*** tracks CBS up to 32 robots, then gridlocks at 40 on
+  every seed (154 deliveries; stuck by tick ~200). The cause is its station
+  clearance rule from phase 2: no parking within 2 cells of a drop-off cell.
+  It was tuned for the warehouse's four corner stations (20 of 164 floor
+  cells). The café has 40 drop-off cells around its tables, and the rule
+  covers 168 of 206 floor cells. That leaves 38 cells where a robot may stop,
+  fewer than 40 robots.
 
 ## Roadmap
 

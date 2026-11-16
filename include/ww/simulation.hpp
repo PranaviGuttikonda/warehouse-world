@@ -31,8 +31,10 @@ struct RobotView {
     int id;
     Cell cell;
     Cell goal;
+    Cell dropoff;  // where this robot's current order goes
     bool carrying;
     int waitTicks;  // consecutive ticks blocked
+    std::vector<Cell> route;  // planned cells from this tick on (space-time A*, CBS); empty for local
 };
 
 /// The whole world: static grid + robots + systems, advanced one tick at a time.
