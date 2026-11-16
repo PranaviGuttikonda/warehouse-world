@@ -53,7 +53,7 @@ const Color kDimText{110, 116, 130, 255};
 const Color kButton{32, 35, 43, 255};
 const Color kButtonHover{45, 49, 60, 255};
 
-// Planner buttons, in P-key cycling order. CBS goes here once it exists.
+// Planner buttons, in P-key cycling order.
 struct PlannerChoice {
     ww::Planner planner;
     const char* label;
@@ -61,6 +61,7 @@ struct PlannerChoice {
 constexpr PlannerChoice kPlanners[] = {
     {ww::Planner::Local, "Local"},
     {ww::Planner::SpaceTime, "Space-time A*"},
+    {ww::Planner::Cbs, "CBS"},
 };
 
 struct Options {
@@ -414,7 +415,7 @@ std::string loadMap(const std::string& path) {
 
 [[noreturn]] void usage(int code) {
     std::cout << "usage: viewer [--robots N] [--seed S] [--hz 2|4|8|15|30|60|120] [--map FILE]\n"
-                 "              [--planner local|stastar] [--record OUT.gif [--frames N]]\n";
+                 "              [--planner local|stastar|cbs] [--record OUT.gif [--frames N]]\n";
     std::exit(code);
 }
 

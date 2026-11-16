@@ -30,10 +30,12 @@ cmake --build build -j
 ./build/warehouse --map maps/small.txt --robots 6
 ./build/warehouse --headless --robots 16 --ticks 200000   # benchmark
 ./build/warehouse --planner stastar --robots 28           # space-time A*
+./build/warehouse --planner cbs --robots 40               # conflict-based search
 ```
 
-`--planner` picks how robots move: `local` (phase 1, the default) or
-`stastar` (space-time A* with reservations, see below).
+`--planner` picks how robots move: `local` (phase 1, the default),
+`stastar` (space-time A* with reservations) or `cbs` (conflict-based
+search, all robots planned together); see below.
 
 ### Graphical viewer
 
@@ -44,8 +46,8 @@ hash) on the first run.
 cmake -S . -B build -DWW_VIEWER=ON
 cmake --build build -j
 ./build/viewer                           # purple = to shelf, coral = carrying
-./build/viewer --robots 24 --hz 15 --seed 3 --planner stastar
-./build/viewer --robots 24 --planner stastar --record docs/viewer.gif  # the GIF above
+./build/viewer --robots 40 --hz 15 --seed 3 --planner cbs
+./build/viewer --robots 40 --planner cbs --record docs/viewer.gif --frames 180  # the GIF above
 ```
 
 The bottom bar has buttons for everything, so the browser build works
@@ -84,6 +86,7 @@ host can serve them.
 | A* | `astar.hpp` | Single-robot shortest path (Manhattan heuristic, deterministic ties); the base for space-time planning |
 | Reservations | `reservation.hpp` | Who holds which cell at which tick, plus "parked from tick t on"; swap checks fall out of the vertex entries |
 | Space-time A* | `stastar.hpp` | `--planner stastar`: A* over (cell, tick) against the reservation table; replans on a new goal |
+| CBS | `cbs.hpp` | `--planner cbs`: windowed conflict-based search, all robots planned jointly; replans on any new goal |
 | Tasks | `systems.cpp` | Shelf face → station → new task; counts deliveries |
 | Viewer | `apps/viewer.cpp` | raylib window or WebAssembly page; robots move smoothly between cells using `FixedTimestep::alpha()` |
 | Simulation | `simulation.hpp` | Owns the world, runs systems in order, validates invariants |
@@ -160,7 +163,53 @@ How it works (`stastar.hpp`):
 move, so at high density they can still box each other in (40 robots
 fill a fifth of the floor). Of the variations tried, a wider station
 clearance (3) and letting every stuck robot step aside were both worse.
-Conflict-based search (CBS), which plans robots jointly, is the next step.
+CBS, below, plans robots jointly and fixes these cases.
+
+## Phase 2: conflict-based search (CBS)
+
+Deliveries in 20,000 ticks on the default map, mean over seeds 1–5
+(`scripts/bench.sh --planner cbs`):
+
+| Robots | 4 | 8 | 12 | 16 | 20 | 24 | 28 | 32 | 40 |
+|---|---|---|---|---|---|---|---|---|---|
+| Local | 1872 | 3624 | 4029 | 4545 | 4037 | 3638 | 1973 | 1283 | 985 |
+| Space-time A\* | 2562 | 5041 | 7372 | 9536 | 11491 | 13196 | 14612 | 14726 | 8816 |
+| **CBS** | **2568** | **5101** | **7625** | **10064** | **12467** | **14844** | **17106** | **19337** | **23577** |
+| CBS, min-max | 2549-2583 | 5081-5125 | 7591-7673 | 10034-10111 | 12431-12493 | 14808-14866 | 17058-17143 | 19303-19396 | 23474-23640 |
+| CBS vs space-time A\* | 1.00× | 1.01× | 1.03× | 1.06× | 1.08× | 1.12× | 1.17× | 1.31× | 2.67× |
+
+With few robots CBS and space-time A* are about the same: robots rarely
+meet. The gap opens with density, and at 40 robots CBS never gridlocks:
+throughput keeps rising almost linearly instead of collapsing, and all
+five seeds land within 1% of each other. The three seeds where space-time
+A* gridlocked (1, 3, 4: 3,212 / 4,533 / 2,661 deliveries) now deliver
+23,640 / 23,563 / 23,474. Cost: about 0.23 ms per tick at 40 robots; 4–10
+of the ~18,600 solves per run hit the node budget and used the fallback.
+
+This is a windowed (rolling-horizon), greedy (bounded-suboptimal) variant
+of CBS, not optimal CBS: it resolves conflicts only a few ticks ahead and
+prefers plans with fewer conflicts over cheaper ones.
+
+How it works (`cbs.hpp`):
+
+- **Windowed.** Robots get new tasks all the time, so CBS plans everyone
+  jointly for the next 5 ticks only. Everyone replans as soon as any
+  robot reaches its goal (its task changes), and at least every 5 ticks,
+  so every step a robot takes was checked against every other robot.
+  Conflicts after a robot's arrival are ignored: those ticks never run.
+- **Constraint tree.** Each node holds constraints ("agent i not on cell c
+  at tick t", or "not along edge u → v") and one path per robot. The
+  earliest conflict (same cell, or a swap) splits a node into two
+  children, one constraint for each of the two robots; only that robot is
+  replanned, with space-time A* depth-limited to the window.
+- **Greedy order.** Nodes are expanded fewest conflicts first, then by
+  total cost. Plain cost-first CBS almost never finished within its budget
+  at 40 robots (every solve fell back); greedy ordering trades optimality
+  for solving in time.
+- **Safe fallback.** If 1,500 nodes aren't enough, robots are planned one
+  at a time: each avoids the paths before it and the cells of the robots
+  after it, so everyone can at least wait. It is always conflict-free,
+  just conservative; it ran in under 0.1% of solves at 40 robots.
 
 ## Roadmap
 
@@ -172,8 +221,10 @@ See [docs/VISION.md](docs/VISION.md).
 - [x] Graphical viewer: raylib, desktop and WebAssembly
 - [x] A*
 - [x] Space-time A* with planner buttons
-- [ ] Conflict-based search (CBS)
+- [x] Conflict-based search (CBS)
 - [ ] Café theme + map editor
 - [ ] One-way aisles
 - [ ] Challenge levels
 - [ ] Web deploy
+- [ ] Later: smarter task assignment (which robot takes which order)
+- [ ] Stretch: authoritative server streaming state over TCP
