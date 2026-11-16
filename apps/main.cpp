@@ -5,6 +5,7 @@
 //   ./warehouse --map maps/small.txt    custom layout
 //   ./warehouse --headless --ticks 100000   benchmark, no drawing
 //   ./warehouse --planner stastar       space-time A* instead of local moves
+//   ./warehouse --planner cbs           conflict-based search, robots jointly
 
 #include <chrono>
 #include <csignal>
@@ -37,7 +38,7 @@ struct Options {
 
 [[noreturn]] void usage(int code) {
     std::cout << "usage: warehouse [--robots N] [--ticks N] [--hz R] [--seed S]\n"
-                 "                 [--map FILE] [--planner local|stastar] [--headless] [--no-color]\n";
+                 "                 [--map FILE] [--planner local|stastar|cbs] [--headless] [--no-color]\n";
     std::exit(code);
 }
 
@@ -95,8 +96,10 @@ int runHeadless(ww::Simulation& sim, long long ticks) {
               << "robots       " << sim.robots().size() << "\n"
               << "deliveries   " << s.deliveries << "\n"
               << "moves        " << s.moves << "\n"
-              << "waits        " << s.waits << "\n"
-              << "elapsed      " << secs << " s\n"
+              << "waits        " << s.waits << "\n";
+    if (sim.planner() == ww::Planner::Cbs)
+        std::cout << "cbs solves   " << s.cbsSolves << " (" << s.cbsFallbacks << " fell back)\n";
+    std::cout << "elapsed      " << secs << " s\n"
               << "ticks/sec    " << static_cast<long long>(s.ticks / std::max(secs, 1e-9)) << "\n"
               << "state valid  " << (problem.empty() ? "yes" : problem) << "\n";
     return problem.empty() ? 0 : 2;

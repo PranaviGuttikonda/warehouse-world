@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <stdexcept>
 
+#include "ww/cbs.hpp"
 #include "ww/stastar.hpp"
 
 namespace ww {
@@ -11,12 +12,13 @@ const char* plannerName(Planner p) {
     switch (p) {
         case Planner::Local: return "local";
         case Planner::SpaceTime: return "stastar";
+        case Planner::Cbs: return "cbs";
     }
     return "?";
 }
 
 std::optional<Planner> parsePlanner(std::string_view name) {
-    for (Planner p : {Planner::Local, Planner::SpaceTime})
+    for (Planner p : {Planner::Local, Planner::SpaceTime, Planner::Cbs})
         if (name == plannerName(p)) return p;
     return std::nullopt;
 }
@@ -45,15 +47,18 @@ Simulation::Simulation(Grid grid, Config config)
             // Park on the spawn cell; the first step replans (goal unset).
             Plan& plan = reg_.add(e, Plan{{spawns[i]}, 0});
             reservations_.reservePath(e, plan.path, plan.start);
+        } else if (planner_ == Planner::Cbs) {
+            reg_.add(e, Plan{{spawns[i]}, 0});  // goal unset: the first step plans
         }
     }
 }
 
 void Simulation::step() {
-    if (planner_ == Planner::Local)
-        movementSystem(reg_, grid_, dist_, occupancy_, rng_, stats_);
-    else
-        spaceTimeSystem(reg_, grid_, dist_, reservations_, occupancy_, stats_);
+    switch (planner_) {
+        case Planner::Local: movementSystem(reg_, grid_, dist_, occupancy_, rng_, stats_); break;
+        case Planner::SpaceTime: spaceTimeSystem(reg_, grid_, dist_, reservations_, occupancy_, stats_); break;
+        case Planner::Cbs: cbsSystem(reg_, grid_, dist_, occupancy_, stats_); break;
+    }
     taskSystem(reg_, grid_, rng_, stats_);
     ++stats_.ticks;
 }

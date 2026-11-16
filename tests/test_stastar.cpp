@@ -160,8 +160,8 @@ TEST(stastar_robots_line_up_for_one_station) {
 }
 
 TEST(planner_names_round_trip) {
-    for (Planner p : {Planner::Local, Planner::SpaceTime}) CHECK(parsePlanner(plannerName(p)) == p);
-    CHECK(!parsePlanner("cbs").has_value());
+    for (Planner p : {Planner::Local, Planner::SpaceTime, Planner::Cbs}) CHECK(parsePlanner(plannerName(p)) == p);
+    CHECK(!parsePlanner("pibt").has_value());
 }
 
 TEST(stastar_simulation_stays_collision_free) {

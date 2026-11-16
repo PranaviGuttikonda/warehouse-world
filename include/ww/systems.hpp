@@ -15,6 +15,8 @@ struct Stats {
     long long deliveries = 0;
     long long moves = 0;
     long long waits = 0;
+    long long cbsSolves = 0;     // CBS planner: joint replans
+    long long cbsFallbacks = 0;  // ... of which hit the node budget
 };
 
 /// Shortest-path distances from every cell to one goal, ignoring robots.

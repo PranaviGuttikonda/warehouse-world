@@ -18,9 +18,10 @@ namespace ww {
 enum class Planner {
     Local,      // phase 1: BFS step + local "cell empty at tick start" rule
     SpaceTime,  // space-time A* against a reservation table
+    Cbs,        // windowed conflict-based search, all robots jointly
 };
 
-/// Given: a planner. Approach: short CLI name ("local", "stastar").
+/// Given: a planner. Approach: short CLI name ("local", "stastar", "cbs").
 const char* plannerName(Planner p);
 /// Given: a CLI name. Approach: inverse of plannerName; nullopt if unknown.
 std::optional<Planner> parsePlanner(std::string_view name);
