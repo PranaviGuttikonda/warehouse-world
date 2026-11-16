@@ -1,6 +1,6 @@
 # warehouse-world
 
-![Robot waiters carrying plates from the kitchen counter to café tables](docs/viewer.gif)
+![Robots carrying orders (amber) from the kitchen counter to café tables](docs/viewer.gif)
 
 A multi-agent path finding sim: robots pick items up and deliver them
 without colliding, using one of three planners (local rules, space-time
@@ -53,28 +53,28 @@ cmake --build build -j
 ./build/viewer                           # the café, 16 robots
 ./build/viewer --robots 32 --hz 15 --seed 3 --planner cbs
 ./build/viewer --map warehouse           # the benchmark map, same theme
-./build/viewer --robots 24 --planner cbs --record docs/viewer.gif --frames 88 --fps 15  # the GIF above
+./build/viewer --robots 24 --planner cbs --record docs/viewer.gif --frames 230  # the GIF above
 ```
 
 How to read it:
-- A **bubble** over a table is an order, with customers seated on its chairs. A
-  red badge counts orders.
-- A **bowl on the counter** marks an order ready for pickup, and the mats below
-  are the pickup cells.
-- A robot **holding a tray** is carrying an order. A dotted line in its colour
-  leads to the table, following its planned path where there is one, and the
-  bubble's outline takes the same colour.
-- "+1" and a star pop up at each delivery.
+- A hollow square is a robot heading to the kitchen; a filled amber one is
+  carrying an order. The two dots are its eyes, facing the way it's going.
+- An amber dot on a table is an order waiting there (with a count if there
+  are several). When it's delivered, the dot fades and a "+1" drifts up.
+- Hover or click a robot to see its planned path; <kbd>T</kbd> shows every
+  robot's path.
 
 The bottom bar has buttons for everything, so the browser build works
 without a keyboard: pause, speed −/+, robot count −/+, and one button per
 planner (the active one is highlighted). Changing the planner or robot count
 restarts the run with the same seed, so comparisons are fair. Keys do the
 same: <kbd>space</kbd> pause, <kbd>+</kbd>/<kbd>-</kbd> speed,
-<kbd>↑</kbd>/<kbd>↓</kbd> robots, <kbd>P</kbd> next planner. The HUD shows
-orders served, orders per minute at the current speed (over the last
-10 s), robots stuck (blocked 3+ ticks in a row) and the tick. On Linux, raylib also needs
-the X11 and OpenGL development packages.
+<kbd>↑</kbd>/<kbd>↓</kbd> robots, <kbd>P</kbd> next planner, <kbd>T</kbd>
+all paths. The HUD line reads "served · per minute · stuck": orders
+served, orders per minute at the current speed (over the last 10 s) and
+robots blocked 3+ ticks in a row. On Linux, raylib also needs
+the X11 and OpenGL development packages. The UI font is IBM Plex Sans
+(SIL Open Font License, `assets/fonts/OFL.txt`), embedded at build time.
 
 ### In the browser (WebAssembly)
 
@@ -104,7 +104,7 @@ host can serve them.
 | Space-time A* | `stastar.hpp` | `--planner stastar`: A* over (cell, tick) against the reservation table; replans on a new goal |
 | CBS | `cbs.hpp` | `--planner cbs`: windowed conflict-based search, all robots planned jointly; replans on any new goal |
 | Tasks | `systems.cpp` | Shelf face → station → new task; counts deliveries |
-| Viewer | `apps/viewer.cpp` | Rush Hour Café theme in a raylib window or WebAssembly page; robots move smoothly between cells using `FixedTimestep::alpha()` |
+| Viewer | `apps/viewer.cpp` | Rush Hour Café in a raylib window or WebAssembly page (minimal dark style, IBM Plex Sans embedded at build time); robots move smoothly between cells using `FixedTimestep::alpha()` |
 | Simulation | `simulation.hpp` | Owns the world, runs systems in order, validates invariants |
 
 Same seed, same run: the simulation is fully deterministic, on every
@@ -284,7 +284,10 @@ See [docs/VISION.md](docs/VISION.md).
 - [x] A*
 - [x] Space-time A* with planner buttons
 - [x] Conflict-based search (CBS)
-- [ ] Café theme + map editor
+- [ ] Café look and café map
+- [ ] Space-time A* clearance fix (station no-parking rule only for drop-offs with ≤ 2 open neighbours)
+- [ ] Comparison mode: split-screen planners, congestion heatmap, hover card
+- [ ] Map editor
 - [ ] One-way aisles
 - [ ] Challenge levels
 - [ ] Web deploy

@@ -44,7 +44,18 @@ if(WW_VIEWER)
     DOWNLOAD_EXTRACT_TIMESTAMP TRUE)
   FetchContent_MakeAvailable(raylib)
 
+  # Embed the UI font (IBM Plex Sans, OFL) as a byte array, so desktop and
+  # web builds load it the same way with no file I/O.
+  set(WW_FONT ${CMAKE_SOURCE_DIR}/assets/fonts/IBMPlexSans-Regular.ttf)
+  set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS ${WW_FONT})
+  file(READ ${WW_FONT} WW_FONT_HEX HEX)
+  string(REGEX REPLACE "([0-9a-f][0-9a-f])" "0x\\1," WW_FONT_BYTES "${WW_FONT_HEX}")
+  file(WRITE ${CMAKE_BINARY_DIR}/generated/ui_font.h
+    "// Generated from assets/fonts/IBMPlexSans-Regular.ttf (SIL OFL 1.1).\n"
+    "static const unsigned char kUiFontData[] = {${WW_FONT_BYTES}};\n")
+
   add_executable(viewer apps/viewer.cpp)
+  target_include_directories(viewer PRIVATE ${CMAKE_BINARY_DIR}/generated)
   target_link_libraries(viewer PRIVATE ww_core raylib)
   target_compile_options(viewer PRIVATE -Wall -Wextra)
   if(EMSCRIPTEN)

@@ -5,8 +5,9 @@
 //   ./viewer --robots 24 --hz 15 --seed 3 --planner stastar
 //   ./viewer --record docs/viewer.gif     write a short GIF and exit
 //
-// Keys: space pause, +/- speed, up/down robot count, P cycle planner.
-// Every control is also a button in the bottom bar (mouse or touch).
+// Keys: space pause, +/- speed, up/down robot count, P cycle planner,
+// T show all paths. Every control is also a button in the bottom bar
+// (mouse or touch); hover or click a robot to see its planned path.
 
 #include <algorithm>
 #include <cmath>
@@ -20,6 +21,7 @@
 #include <vector>
 
 #include "raylib.h"
+#include "ui_font.h"  // generated: kUiFontData, IBM Plex Sans (SIL OFL 1.1)
 #include "ww/grid.hpp"
 #include "ww/simulation.hpp"
 #include "ww/timestep.hpp"
@@ -36,49 +38,28 @@ using ww::Cell;
 
 constexpr int kCell = 32;
 constexpr int kMargin = 16;
-constexpr int kHudH = 36;
-constexpr int kFooterH = 48;
+constexpr int kHudH = 32;
+constexpr int kFooterH = 40;
 constexpr int kMinWidth = 720;  // room for the control bar on small maps
 constexpr double kHzSteps[] = {2, 4, 8, 15, 30, 60, 120};
-constexpr double kRateWindow = 10.0;  // seconds of running time for deliveries/min
+constexpr double kRateWindow = 10.0;  // seconds of running time for orders/min
+constexpr double kPopSeconds = 0.8;   // delivery fade
+constexpr int kStuckTicks = 3;        // a robot counts as stuck after this many blocked ticks
 
-// Café palette (docs/VISION.md).
-const Color kOutline{59, 42, 32, 255};      // #3B2A20, chunky outlines and the frame
-const Color kFloorA{255, 233, 199, 255};    // #FFE9C7
-const Color kFloorB{255, 221, 176, 255};    // #FFDDB0
-const Color kWall{122, 82, 56, 255};
-const Color kCounter{232, 93, 74, 255};     // #E85D4A
-const Color kCounterTop{242, 129, 111, 255};
-const Color kTable{255, 255, 255, 255};
-const Color kShadow{59, 42, 32, 40};
-const Color kPlant{92, 193, 92, 255};       // #5CC15C
-const Color kPlantDark{63, 160, 72, 255};
-const Color kPot{200, 105, 62, 255};
-const Color kRobot{79, 195, 247, 255};      // #4FC3F7
-const Color kRobotShade{47, 168, 221, 255};
-const Color kFood{232, 93, 74, 255};
-const Color kFoodYellow{255, 201, 60, 255};
-const Color kText{255, 233, 199, 255};      // cream on the dark frame
-const Color kDimText{196, 160, 128, 255};
-const Color kButton{255, 243, 224, 255};
-const Color kButtonHover{255, 224, 178, 255};
-const Color kButtonText{59, 42, 32, 255};
-const Color kButtonDisabled{170, 140, 115, 255};
-const Color kChair{185, 119, 74, 255};
-const Color kTray{236, 239, 241, 255};
-const Color kSteam{191, 165, 138, 255};
-const Color kMat{244, 199, 161, 255};
-const Color kStar{255, 201, 60, 255};
-// Soft per-robot colours linking a carrying robot, its route and its table.
-const Color kRouteColors[] = {{100, 181, 246, 255}, {186, 104, 200, 255}, {77, 182, 172, 255},
-                              {255, 167, 77, 255},  {240, 98, 146, 255},  {149, 117, 205, 255}};
-// Customer looks: shirt and skin, picked per table and seat.
-const Color kShirts[] = {{255, 138, 101, 255}, {186, 104, 200, 255}, {129, 199, 132, 255}, {255, 213, 79, 255}};
-const Color kSkins[] = {{241, 194, 125, 255}, {224, 172, 105, 255}, {141, 85, 36, 255}, {255, 219, 172, 255}};
-constexpr double kPopSeconds = 0.9;  // delivery "+1" and star
-
-// A robot counts as stuck after this many blocked ticks in a row.
-constexpr int kStuckTicks = 3;
+// Minimal dark palette (docs/VISION.md). Amber is the only accent, and it
+// only ever means food: an order waiting, or a robot carrying one.
+const Color kBg{22, 24, 29, 255};          // #16181D
+const Color kFloor{28, 31, 38, 255};       // #1C1F26
+const Color kWall{42, 46, 55, 255};        // #2A2E37
+const Color kCounter{47, 51, 61, 255};     // #2F333D
+const Color kMat{38, 42, 50, 255};         // #262A32
+const Color kTableEdge{58, 63, 74, 255};   // #3A3F4A
+const Color kPlant{51, 64, 54, 255};       // #334036
+const Color kInk{230, 226, 218, 255};      // #E6E2DA robots, main text
+const Color kMuted{138, 143, 152, 255};    // #8A8F98 secondary text
+const Color kFaint{90, 96, 107, 255};      // #5A606B paths
+const Color kDisabled{74, 79, 89, 255};
+const Color kAmber{230, 161, 90, 255};     // #E6A15A food and orders
 
 // Planner buttons, in P-key cycling order.
 struct PlannerChoice {
@@ -90,6 +71,27 @@ constexpr PlannerChoice kPlanners[] = {
     {ww::Planner::SpaceTime, "Space-time A*"},
     {ww::Planner::Cbs, "CBS"},
 };
+
+// The UI font, loaded once after the window opens.
+Font gFont{};
+
+// Given: an open window. Approach: rasterise the embedded TTF once at a size
+// big enough for the 2x GIF render, with bilinear filtering for the smaller
+// sizes we draw. ASCII plus the middle dot used in the HUD.
+void loadUiFont() {
+    std::vector<int> codepoints;
+    for (int c = 32; c < 127; ++c) codepoints.push_back(c);
+    codepoints.push_back(0x00B7);  // ·
+    gFont = LoadFontFromMemory(".ttf", kUiFontData, static_cast<int>(sizeof(kUiFontData)), 32, codepoints.data(),
+                               static_cast<int>(codepoints.size()));
+    SetTextureFilter(gFont.texture, TEXTURE_FILTER_BILINEAR);
+}
+
+void text(const std::string& s, float x, float y, float size, Color c) {
+    DrawTextEx(gFont, s.c_str(), {x, y}, size, 0, c);
+}
+
+float measure(const std::string& s, float size) { return MeasureTextEx(gFont, s.c_str(), size, 0).x; }
 
 struct Options {
     int robots = 16;
@@ -108,20 +110,23 @@ struct App {
     std::unique_ptr<ww::Simulation> sim;
     ww::FixedTimestep timestep{1.0 / kHzSteps[2]};
     std::vector<Cell> prev, cur;  // by robot id: before and after the last tick
+    std::vector<Cell> facing;     // by robot id: last direction moved (kept while waiting)
     std::vector<Rectangle> shelves;
     bool paused = false;
+    bool showAllPaths = false;
+    int selected = -1;  // robot id whose path stays visible, -1 for none
     double runTime = 0.0;  // seconds spent unpaused
     std::deque<std::pair<double, long long>> rateSamples;
+    std::vector<std::pair<Cell, double>> pops;  // delivered-at drop-off cell, runTime
     int width = 0, height = 0;
     int gridX = kMargin;  // left edge of the grid (centred when the window is wider)
     int prevTouches = 0;
-    std::vector<std::pair<Cell, double>> pops;  // delivered-at table, runTime of delivery
 };
 
 double hz(const App& a) { return kHzSteps[a.opt.hzIndex]; }
 
-// Given: the grid. Approach: flood-fill each shelf block and keep its
-// bounding box, so a block draws as one rounded rect instead of beads.
+// Given: the grid. Approach: flood-fill each counter block and keep its
+// bounding box, so a block draws as one band instead of separate cells.
 std::vector<Rectangle> shelfBlocks(const ww::Grid& g, int originX) {
     std::vector<Rectangle> out;
     std::vector<bool> seen(static_cast<std::size_t>(g.width() * g.height()), false);
@@ -143,7 +148,7 @@ std::vector<Rectangle> shelfBlocks(const ww::Grid& g, int originX) {
                 stack.push_back(n);
             }
         }
-        const float inset = 4.0f;
+        const float inset = 3.0f;
         out.push_back({originX + x0 * kCell + inset, kHudH + y0 * kCell + inset,
                        (x1 - x0 + 1) * kCell - 2 * inset, (y1 - y0 + 1) * kCell - 2 * inset});
     }
@@ -164,8 +169,10 @@ void restart(App& a) {
     a.timestep = ww::FixedTimestep(1.0 / hz(a));
     snapshot(*a.sim, a.cur);
     a.prev = a.cur;
+    a.facing.assign(a.cur.size(), Cell{1, 0});
     a.rateSamples.clear();
     a.pops.clear();
+    a.selected = -1;
 }
 
 enum class Action { None, Pause, Slower, Faster, FewerRobots, MoreRobots, Planner };
@@ -175,46 +182,48 @@ struct Button {
     std::string label;
     Action action;
     int planner = -1;     // index into kPlanners for Action::Planner
-    bool active = false;  // highlighted (current planner)
+    bool active = false;  // current planner
     bool enabled = true;
 };
+
+constexpr float kButtonText = 14;
 
 int maxRobots(const App& a) { return static_cast<int>(a.sim->grid().floorCells().size()); }
 
 // Given: app state. Approach: one layout used for both drawing and hit
 // testing, so what you see is what you click. Value labels are buttons
-// with Action::None.
+// with Action::None. Hit boxes stay 28 px tall even though the text is small.
 std::vector<Button> layoutButtons(const App& a) {
     std::vector<Button> out;
-    const float y = static_cast<float>(a.height - kFooterH + 10), h = 28;
-    float x = kMargin;
-    auto add = [&](float w, std::string label, Action act, bool enabled = true) {
+    const float y = static_cast<float>(a.height - kFooterH + 6), h = 28;
+    float x = kMargin - 6;
+    auto add = [&](std::string label, Action act, bool enabled = true) {
+        const float w = measure(label, kButtonText) + 14;
         out.push_back({{x, y, w, h}, std::move(label), act, -1, false, enabled});
         x += w;
     };
     const int last = static_cast<int>(std::size(kHzSteps)) - 1;
-    char text[32];
+    char value[32];
 
-    add(72, a.paused ? "Play" : "Pause", Action::Pause);
-    x += 16;
-    add(28, "-", Action::Slower, a.opt.hzIndex > 0);
-    std::snprintf(text, sizeof text, "%g Hz", hz(a));
-    add(64, text, Action::None);
-    add(28, "+", Action::Faster, a.opt.hzIndex < last);
-    x += 16;
-    add(28, "-", Action::FewerRobots, a.opt.robots > 1);
-    std::snprintf(text, sizeof text, "%d robots", a.opt.robots);
-    add(96, text, Action::None);
-    add(28, "+", Action::MoreRobots, a.opt.robots < maxRobots(a));
+    add(a.paused ? "Play" : "Pause", Action::Pause);
+    x += 14;
+    add("-", Action::Slower, a.opt.hzIndex > 0);
+    std::snprintf(value, sizeof value, "%g Hz", hz(a));
+    add(value, Action::None);
+    add("+", Action::Faster, a.opt.hzIndex < last);
+    x += 14;
+    add("-", Action::FewerRobots, a.opt.robots > 1);
+    std::snprintf(value, sizeof value, "%d robots", a.opt.robots);
+    add(value, Action::None);
+    add("+", Action::MoreRobots, a.opt.robots < maxRobots(a));
 
     // Planner buttons, right-aligned.
-    x = static_cast<float>(a.width - kMargin);
+    x = static_cast<float>(a.width - kMargin + 6);
     for (int i = static_cast<int>(std::size(kPlanners)) - 1; i >= 0; --i) {
-        const float w = static_cast<float>(MeasureText(kPlanners[i].label, 16) + 24);
+        const float w = measure(kPlanners[i].label, kButtonText) + 14;
         x -= w;
         out.push_back({{x, y, w, h}, kPlanners[i].label, Action::Planner, i,
                        kPlanners[i].planner == a.opt.planner, true});
-        x -= 8;
     }
     return out;
 }
@@ -259,7 +268,33 @@ void apply(App& a, Action act, int planner = -1) {
     }
 }
 
-// Given: a click position. Approach: hit-test the same layout that is drawn.
+Vector2 cellCentre(const App& a, float x, float y) {
+    return {a.gridX + (x + 0.5f) * kCell, kHudH + (y + 0.5f) * kCell};
+}
+
+// Given: app state. Approach: each robot's drawn position, lerped from its
+// previous to its current cell by FixedTimestep::alpha(); indexed by id.
+std::vector<Vector2> robotPositions(const App& a) {
+    const float alpha = a.paused ? 1.0f : static_cast<float>(a.timestep.alpha());
+    std::vector<Vector2> pos(a.cur.size());
+    for (std::size_t id = 0; id < a.cur.size(); ++id) {
+        const Cell from = id < a.prev.size() ? a.prev[id] : a.cur[id], to = a.cur[id];
+        pos[id] = cellCentre(a, from.x + (to.x - from.x) * alpha, from.y + (to.y - from.y) * alpha);
+    }
+    return pos;
+}
+
+// Robot id under a point, or -1.
+int robotAt(const App& a, Vector2 p) {
+    const std::vector<Vector2> pos = robotPositions(a);
+    for (std::size_t id = 0; id < pos.size(); ++id)
+        if (std::fabs(p.x - pos[id].x) <= kCell * 0.4f && std::fabs(p.y - pos[id].y) <= kCell * 0.4f)
+            return static_cast<int>(id);
+    return -1;
+}
+
+// Given: a click position. Approach: buttons first (same layout as drawn);
+// otherwise clicking a robot pins its path, clicking elsewhere unpins.
 void clickAt(App& a, Vector2 at) {
     for (const Button& b : layoutButtons(a)) {
         if (b.action != Action::None && b.enabled && CheckCollisionPointRec(at, b.rect)) {
@@ -267,6 +302,8 @@ void clickAt(App& a, Vector2 at) {
             return;
         }
     }
+    const int id = robotAt(a, at);
+    a.selected = id == a.selected ? -1 : id;
 }
 
 // Given: this frame's input. Approach: a click is a mouse press, or else a
@@ -281,6 +318,7 @@ void handleInput(App& a) {
     if (pressed(KEY_DOWN)) apply(a, Action::FewerRobots);
     if (IsKeyPressed(KEY_P))
         apply(a, Action::Planner, (plannerIndex(a) + 1) % static_cast<int>(std::size(kPlanners)));
+    if (IsKeyPressed(KEY_T)) a.showAllPaths = !a.showAllPaths;
 
     const int touches = GetTouchPointCount();
     bool clicked = false;
@@ -297,7 +335,8 @@ void handleInput(App& a) {
 }
 
 // Given: frame time. Approach: run fixed ticks; before each, keep the old
-// positions so drawing can lerp prev -> cur by FixedTimestep::alpha().
+// positions so drawing can lerp prev -> cur by FixedTimestep::alpha(), note
+// which way each robot moved, and catch deliveries for the fade.
 void update(App& a, double frameSeconds) {
     if (a.paused) return;
     a.runTime += frameSeconds;
@@ -306,7 +345,8 @@ void update(App& a, double frameSeconds) {
         const std::vector<ww::RobotView> before = a.sim->robots();
         a.sim->step();
         snapshot(*a.sim, a.cur);
-        // A robot that was carrying and now isn't just served its table.
+        for (std::size_t id = 0; id < a.cur.size() && id < a.facing.size(); ++id)
+            if (!(a.cur[id] == a.prev[id])) a.facing[id] = {a.cur[id].x - a.prev[id].x, a.cur[id].y - a.prev[id].y};
         const std::vector<ww::RobotView> after = a.sim->robots();
         for (std::size_t i = 0; i < before.size() && i < after.size(); ++i)
             if (before[i].carrying && !after[i].carrying) a.pops.emplace_back(before[i].dropoff, a.runTime);
@@ -324,34 +364,6 @@ double deliveriesPerMinute(const App& a) {
     return t1 - t0 < 1.0 ? 0.0 : static_cast<double>(d1 - d0) / (t1 - t0) * 60.0;
 }
 
-// Given: a centre and radius. Approach: outline circle first, fill on top,
-// so every shape gets the same chunky dark edge.
-void outlinedCircle(Vector2 c, float r, Color fill, float edge = 2.5f) {
-    DrawCircleV(c, r + edge, kOutline);
-    DrawCircleV(c, r, fill);
-}
-
-void outlinedRect(Rectangle r, float roundness, Color fill, float edge = 2.5f) {
-    DrawRectangleRounded({r.x - edge, r.y - edge, r.width + 2 * edge, r.height + 2 * edge}, roundness, 8, kOutline);
-    DrawRectangleRounded(r, roundness, 8, fill);
-}
-
-void drawPlant(Vector2 c) {
-    const float s = kCell;
-    outlinedRect({c.x - s * 0.22f, c.y + s * 0.05f, s * 0.44f, s * 0.32f}, 0.3f, kPot, 2.0f);
-    const Vector2 leaves[3] = {{c.x - s * 0.16f, c.y - s * 0.06f}, {c.x + s * 0.16f, c.y - s * 0.06f},
-                               {c.x, c.y - s * 0.2f}};
-    for (Vector2 l : leaves) DrawCircleV(l, s * 0.17f + 2.0f, kOutline);
-    for (Vector2 l : leaves) DrawCircleV(l, s * 0.17f, kPlant);
-    DrawCircleV({c.x + s * 0.05f, c.y - s * 0.24f}, s * 0.05f, kPlantDark);
-}
-
-void drawTable(Vector2 c) {
-    DrawEllipse(static_cast<int>(c.x), static_cast<int>(c.y + kCell * 0.12f), kCell * 0.42f, kCell * 0.3f, kShadow);
-    outlinedCircle(c, kCell * 0.36f, kTable);
-    DrawCircleLinesV(c, kCell * 0.27f, Color{240, 226, 210, 255});
-}
-
 // Given: a drop-off cell. Approach: the table it serves is the first table
 // next to it; on maps with 'S' stations the cell itself.
 Cell tableOf(const ww::Grid& g, Cell dropoff) {
@@ -362,281 +374,135 @@ Cell tableOf(const ww::Grid& g, Cell dropoff) {
     return dropoff;
 }
 
-// Chairs around a table: 2-4 of them, fixed per table, on sides with floor.
-// Sides: 0 north, 1 west, 2 east, 3 south (customers sit on N/W/E only, so
-// the table never hides them).
-std::vector<int> chairSides(const ww::Grid& g, Cell table) {
-    static constexpr int order[4] = {1, 2, 0, 3};  // W, E, N, S
-    static constexpr Cell dir[4] = {{0, -1}, {-1, 0}, {1, 0}, {0, 1}};
-    const int want = 2 + (table.x * 5 + table.y * 3) % 3;
-    std::vector<int> sides;
-    for (int side : order) {
-        const Cell n{table.x + dir[side].x, table.y + dir[side].y};
-        if (static_cast<int>(sides.size()) < want && g.passable(n)) sides.push_back(side);
-    }
-    return sides;
+Color withAlpha(Color c, float a) {
+    c.a = static_cast<unsigned char>(255 * std::clamp(a, 0.0f, 1.0f));
+    return c;
 }
 
-Vector2 sideOffset(int side, float dist) {
-    static constexpr float dx[4] = {0, -1, 1, 0}, dy[4] = {-1, 0, 0, 1};
-    return {dx[side] * dist, dy[side] * dist};
-}
-
-void drawChair(Vector2 table, int side) {
-    const Vector2 o = sideOffset(side, kCell * 0.5f);
-    const float s = kCell * 0.3f;
-    outlinedRect({table.x + o.x - s / 2, table.y + o.y - s / 2, s, s}, 0.35f, kChair, 2.0f);
-}
-
-void drawCustomer(Vector2 table, int side, int look) {
-    const Vector2 o = sideOffset(side, kCell * 0.52f);
-    const Vector2 c{table.x + o.x, table.y + o.y};
-    outlinedRect({c.x - kCell * 0.17f, c.y - kCell * 0.06f, kCell * 0.34f, kCell * 0.26f}, 0.6f,
-                 kShirts[look % 4], 2.0f);
-    outlinedCircle({c.x, c.y - kCell * 0.17f}, kCell * 0.14f, kSkins[look % 4], 2.0f);
-}
-
-// A bowl of food with steam: the dish everywhere (counter, bubble, tray).
-void drawBowl(Vector2 c, float w, bool steam) {
-    if (steam) {
-        for (int i = -1; i <= 1; ++i) {
-            const float x = c.x + i * w * 0.32f, y = c.y - w * 0.45f;
-            DrawLineEx({x, y}, {x + 2, y - w * 0.22f}, 1.6f, kSteam);
-            DrawLineEx({x + 2, y - w * 0.22f}, {x, y - w * 0.44f}, 1.6f, kSteam);
-        }
-    }
-    DrawCircleV({c.x - w * 0.1f, c.y - w * 0.12f}, w * 0.2f, kFood);  // food peeking over the rim
-    DrawCircleV({c.x + w * 0.16f, c.y - w * 0.1f}, w * 0.16f, kFoodYellow);
-    DrawCircleSector(c, w * 0.5f + 2.0f, 0, 180, 16, kOutline);
-    DrawCircleSector(c, w * 0.5f, 0, 180, 16, kTable);
-    DrawRectangleRounded({c.x - w * 0.55f - 1, c.y - 2.5f, w * 1.1f + 2, 4}, 1.0f, 4, kOutline);
-}
-
-void drawOrderBubble(Vector2 table, int orders, Color edge) {
-    const float w = kCell * 0.62f, h = kCell * 0.56f;
-    const Rectangle r{table.x - w / 2, table.y - kCell * 1.12f - h / 2, w, h};
-    const Vector2 tip{table.x, table.y - kCell * 0.62f};
-    DrawTriangle({tip.x - 6, r.y + h - 1}, {tip.x, tip.y + 2.5f}, {tip.x + 6, r.y + h - 1}, edge);
-    DrawRectangleRounded({r.x - 2.5f, r.y - 2.5f, r.width + 5, r.height + 5}, 0.5f, 8, edge);
-    DrawRectangleRounded(r, 0.5f, 8, kTable);
-    DrawTriangle({tip.x - 4, r.y + h - 2}, tip, {tip.x + 4, r.y + h - 2}, kTable);
-    drawBowl({r.x + w / 2, r.y + h * 0.72f}, w * 0.55f, true);
-    if (orders > 1) {  // count badge on the corner
-        const Vector2 b{r.x + w + 1, r.y - 1};
-        outlinedCircle(b, 6.5f, kCounter, 1.5f);
-        char n[8];
-        std::snprintf(n, sizeof n, "%d", orders);
-        DrawText(n, static_cast<int>(b.x - MeasureText(n, 10) / 2.0f), static_cast<int>(b.y - 4.5f), 10, kTable);
-    }
-}
-
-// Rounded blue body, eyes, smile, antenna. Carrying: a tray wider than the
-// robot, held up with both arms, with a bowl on it.
-void drawRobot(Vector2 c, bool carrying, Color tint) {
-    const float r = kCell * 0.34f;
-    DrawEllipse(static_cast<int>(c.x), static_cast<int>(c.y + r * 0.95f), r * 0.9f, r * 0.3f, kShadow);
-    const Rectangle body{c.x - r, c.y - r * 0.9f, 2 * r, 1.9f * r};
-    const Vector2 antennaTop{c.x - r * 0.45f, body.y - r * 0.55f};
-    DrawLineEx({c.x - r * 0.3f, body.y + 1}, antennaTop, 4.5f, kOutline);
-    DrawLineEx({c.x - r * 0.3f, body.y + 1}, antennaTop, 2.0f, kRobotShade);
-    outlinedCircle(antennaTop, r * 0.17f, kCounter, 2.0f);
-    outlinedRect(body, 0.7f, kRobot);
-    DrawRectangleRounded({body.x + 3, body.y + body.height * 0.62f, body.width - 6, body.height * 0.3f}, 0.8f, 6,
-                         kRobotShade);
-    for (float side : {-1.0f, 1.0f}) {
-        const Vector2 eye{c.x + side * r * 0.38f, c.y - r * 0.18f};
-        DrawCircleV(eye, r * 0.16f, kOutline);
-        DrawCircleV({eye.x + r * 0.05f, eye.y - r * 0.06f}, r * 0.06f, kTable);
-    }
-    DrawRing({c.x, c.y + r * 0.02f}, r * 0.3f, r * 0.3f + 2.0f, 25, 155, 12, kOutline);
-    if (!carrying) return;
-    const Vector2 tray{c.x, body.y - r * 0.75f};
-    for (float side : {-1.0f, 1.0f}) {  // arms reaching out and up to the tray rim
-        const Vector2 shoulder{c.x + side * r * 0.9f, c.y - r * 0.05f};
-        const Vector2 elbow{c.x + side * r * 1.35f, c.y - r * 0.45f};
-        const Vector2 hand{c.x + side * r * 1.2f, tray.y + 2};
-        for (auto [from, to] : {std::pair{shoulder, elbow}, std::pair{elbow, hand}}) {
-            DrawLineEx(from, to, 6.0f, kOutline);
-            DrawLineEx(from, to, 3.0f, kRobot);
-        }
-    }
-    DrawEllipse(static_cast<int>(tray.x), static_cast<int>(tray.y), r * 1.4f + 2.5f, r * 0.4f + 2.5f, kOutline);
-    DrawEllipse(static_cast<int>(tray.x), static_cast<int>(tray.y), r * 1.4f, r * 0.4f, tint);
-    DrawEllipse(static_cast<int>(tray.x), static_cast<int>(tray.y - 1), r * 1.18f, r * 0.29f, kTray);
-    drawBowl({tray.x, tray.y - 1}, r * 0.95f, false);
-}
-
-// Dots every few pixels along a polyline; the phase drifts so it reads as
-// "heading that way".
-void drawDottedPath(const std::vector<Vector2>& pts, Color color, float phase) {
-    constexpr float kGap = 7.0f;
-    float carry = std::fmod(phase, kGap);
+// Faint dots every few pixels along a polyline.
+void drawDottedPath(const std::vector<Vector2>& pts) {
+    constexpr float kGap = 6.0f;
+    float carry = 0;
     for (std::size_t i = 1; i < pts.size(); ++i) {
         const Vector2 a = pts[i - 1], b = pts[i];
         const float len = std::hypot(b.x - a.x, b.y - a.y);
         for (float d = kGap - carry; d < len; d += kGap)
-            DrawCircleV({a.x + (b.x - a.x) * d / len, a.y + (b.y - a.y) * d / len}, 1.8f, color);
-        carry = len <= 0 ? carry : std::fmod(carry + len, kGap);
+            DrawCircleV({a.x + (b.x - a.x) * d / len, a.y + (b.y - a.y) * d / len}, 1.2f, kFaint);
+        carry = std::fmod(carry + len, kGap);
     }
 }
 
-void drawStar(Vector2 c, float r, Color fill) {
-    Vector2 pts[10];
-    for (int i = 0; i < 10; ++i) {
-        const float ang = -PI / 2 + i * PI / 5, rad = (i % 2) ? r * 0.45f : r;
-        pts[i] = {c.x + std::cos(ang) * rad, c.y + std::sin(ang) * rad};
+// Rounded square, ~60% of a cell: hollow off-white on the way to the
+// kitchen, filled amber when carrying. Two tiny eyes look where it's going.
+void drawRobot(Vector2 c, bool carrying, Cell facing, bool selected) {
+    const float s = kCell * 0.6f;
+    const Rectangle body{c.x - s / 2, c.y - s / 2, s, s};
+    const float round = 4.0f / s;  // ~2 px corner radius
+    if (selected) DrawRectangleRoundedLinesEx({body.x - 4, body.y - 4, s + 8, s + 8}, 8.0f / (s + 8), 6, 1.0f, kMuted);
+    if (carrying) {
+        DrawRectangleRounded(body, round, 4, kAmber);
+    } else {
+        DrawRectangleRounded(body, round, 4, kBg);
+        DrawRectangleRoundedLinesEx({body.x + 0.75f, body.y + 0.75f, s - 1.5f, s - 1.5f}, round, 4, 1.5f, kInk);
     }
-    for (int i = 0; i < 10; ++i) DrawTriangle(c, pts[(i + 1) % 10], pts[i], fill);
+    const Vector2 d{static_cast<float>(facing.x), static_cast<float>(facing.y)};
+    const Vector2 side{-d.y, d.x};
+    const Color eye = carrying ? kBg : kInk;
+    for (float k : {-1.0f, 1.0f})
+        DrawCircleV({c.x + d.x * s * 0.2f + side.x * k * s * 0.17f, c.y + d.y * s * 0.2f + side.y * k * s * 0.17f},
+                    1.6f, eye);
 }
 
 // Given: current state. Approach: draw the scene in window coordinates; the
 // caller decides the target (screen, or an offscreen texture for recording).
-// Order: floor and walls, wall edges, pickup mats, counter and its dishes,
-// chairs and customers, tables, plants, routes, robots, then bubbles and
-// delivery pops on top so they're never hidden.
+// Flat shapes, thin edges, no shadows; amber only for food.
 void drawScene(const App& a) {
     const ww::Grid& g = a.sim->grid();
-    ClearBackground(kOutline);
-    auto centre = [&](float x, float y) { return Vector2{a.gridX + (x + 0.5f) * kCell, kHudH + (y + 0.5f) * kCell}; };
-    auto at = [&](Cell c) { return centre(float(c.x), float(c.y)); };
+    ClearBackground(kBg);
+    auto at = [&](Cell c) { return cellCentre(a, float(c.x), float(c.y)); };
     const std::vector<ww::RobotView> robots = a.sim->robots();
+    const auto cells = static_cast<std::size_t>(g.width() * g.height());
 
-    for (int y = 0; y < g.height(); ++y) {
-        for (int x = 0; x < g.width(); ++x) {
-            const int px = a.gridX + x * kCell, py = kHudH + y * kCell;
-            const bool wall = g.at({x, y}) == ww::Tile::Wall;
-            DrawRectangle(px, py, kCell, kCell, wall ? kWall : ((x + y) % 2 ? kFloorB : kFloorA));
-        }
-    }
-    // Chunky edge wherever floor meets wall.
-    for (int y = 0; y < g.height(); ++y) {
-        for (int x = 0; x < g.width(); ++x) {
-            if (g.at({x, y}) == ww::Tile::Wall) continue;
-            const int px = a.gridX + x * kCell, py = kHudH + y * kCell;
-            auto wallAt = [&](int dx, int dy) {
-                const Cell n{x + dx, y + dy};
-                return !g.inBounds(n) || g.at(n) == ww::Tile::Wall;
-            };
-            if (wallAt(0, -1)) DrawRectangle(px, py, kCell, 3, kOutline);
-            if (wallAt(0, 1)) DrawRectangle(px, py + kCell - 3, kCell, 3, kOutline);
-            if (wallAt(-1, 0)) DrawRectangle(px, py, 3, kCell, kOutline);
-            if (wallAt(1, 0)) DrawRectangle(px + kCell - 3, py, 3, kCell, kOutline);
-        }
-    }
-    // Pickup mats under the counter.
+    for (int y = 0; y < g.height(); ++y)
+        for (int x = 0; x < g.width(); ++x)
+            DrawRectangle(a.gridX + x * kCell, kHudH + y * kCell, kCell, kCell,
+                          g.at({x, y}) == ww::Tile::Wall ? kWall : kFloor);
     for (Cell f : g.pickFaces()) {
         const Vector2 c = at(f);
-        DrawRectangleRounded({c.x - kCell * 0.36f, c.y - kCell * 0.3f, kCell * 0.72f, kCell * 0.6f}, 0.4f, 6, kMat);
+        DrawRectangleRounded({c.x - kCell * 0.4f, c.y - kCell * 0.4f, kCell * 0.8f, kCell * 0.8f}, 0.2f, 4, kMat);
     }
-    for (const Rectangle& r : a.shelves) {
-        outlinedRect(r, 0.25f, kCounter, 3.0f);
-        DrawRectangleRounded({r.x + 3, r.y + 3, r.width - 6, std::min(r.height * 0.35f, 8.0f)}, 0.6f, 6, kCounterTop);
-    }
-    // A ready dish on the counter next to every pickup a robot is heading to.
-    std::vector<bool> dish(static_cast<std::size_t>(g.width() * g.height()), false);
-    for (const ww::RobotView& r : robots) {
-        if (r.carrying) continue;
-        for (Cell d : ww::kNeighbors) {
-            const Cell n{r.goal.x + d.x, r.goal.y + d.y};
-            if (g.inBounds(n) && g.at(n) == ww::Tile::Shelf && !dish[g.index(n)]) {
-                dish[g.index(n)] = true;
-                drawBowl({at(n).x, at(n).y + kCell * 0.1f}, kCell * 0.42f, true);
-                break;
-            }
-        }
-    }
+    for (const Rectangle& r : a.shelves) DrawRectangleRounded(r, 0.12f, 4, kCounter);
 
-    // Orders per table, and which carrying robot (colour) is on its way.
-    const auto cells = static_cast<std::size_t>(g.width() * g.height());
+    // Orders waiting per table.
     std::vector<int> orders(cells, 0);
-    std::vector<int> courier(cells, -1);
     int stuck = 0;
     for (const ww::RobotView& r : robots) {
-        const int t = g.index(tableOf(g, r.dropoff));
-        ++orders[t];
-        if (r.carrying && courier[t] == -1) courier[t] = r.id;
+        ++orders[g.index(tableOf(g, r.dropoff))];
         stuck += r.waitTicks >= kStuckTicks;
     }
-    auto routeColor = [](int id) { return kRouteColors[id % static_cast<int>(std::size(kRouteColors))]; };
-
-    for (int i = 0; i < static_cast<int>(cells); ++i) {
-        const Cell c = g.cellAt(i);
+    for (std::size_t i = 0; i < cells; ++i) {
+        const Cell c = g.cellAt(static_cast<int>(i));
         const ww::Tile t = g.at(c);
+        if (t == ww::Tile::Plant) DrawCircleV(at(c), kCell * 0.2f, kPlant);
         if (t != ww::Tile::Table && t != ww::Tile::Station) continue;
-        const std::vector<int> sides = t == ww::Tile::Table ? chairSides(g, c) : std::vector<int>{};
-        for (int side : sides) drawChair(at(c), side);
-        int seated = 0;
-        for (int side : sides)
-            if (side != 3 && seated < orders[i]) drawCustomer(at(c), side, i * 3 + seated++);
-        drawTable(at(c));
-    }
-    for (int i = 0; i < static_cast<int>(cells); ++i)
-        if (g.at(g.cellAt(i)) == ww::Tile::Plant) drawPlant(at(g.cellAt(i)));
-
-    // Routes of carrying robots: planned cells while there are any, then a
-    // straight line to the drop-off cell.
-    const float alpha = a.paused ? 1.0f : static_cast<float>(a.timestep.alpha());
-    std::vector<Vector2> pos(robots.size());
-    for (std::size_t k = 0; k < robots.size(); ++k) {
-        const ww::RobotView& r = robots[k];
-        const auto id = static_cast<std::size_t>(r.id);
-        const Cell from = id < a.prev.size() ? a.prev[id] : r.cell;
-        const Cell to = id < a.cur.size() ? a.cur[id] : r.cell;
-        pos[k] = centre(from.x + (to.x - from.x) * alpha, from.y + (to.y - from.y) * alpha);
-        if (!r.carrying) continue;
-        std::vector<Vector2> pts{pos[k]};
-        for (std::size_t j = 1; j < r.route.size() && !(r.route[j - 1] == r.dropoff); ++j) pts.push_back(at(r.route[j]));
-        if (!(r.route.empty() ? r.cell == r.dropoff : std::find(r.route.begin(), r.route.end(), r.dropoff) != r.route.end()))
-            pts.push_back(at(r.dropoff));
-        Color c = routeColor(r.id);
-        c.a = 190;
-        drawDottedPath(pts, c, static_cast<float>(a.runTime * 14.0));
-    }
-    for (std::size_t k = 0; k < robots.size(); ++k) drawRobot(pos[k], robots[k].carrying, routeColor(robots[k].id));
-
-    for (int i = 0; i < static_cast<int>(cells); ++i) {
+        DrawCircleV(at(c), kCell * 0.32f + 1.5f, kTableEdge);
+        DrawCircleV(at(c), kCell * 0.32f, kFloor);
         if (orders[i] == 0) continue;
-        drawOrderBubble(at(g.cellAt(i)), orders[i], courier[i] >= 0 ? routeColor(courier[i]) : kOutline);
+        DrawCircleV(at(c), 3.5f, kAmber);
+        if (orders[i] > 1) text(std::to_string(orders[i]), at(c).x + kCell * 0.32f + 4, at(c).y - 8, 11, kMuted);
     }
-    // Delivery pops: "+1" rising and a star bursting, fading out, to the
-    // right of the bubble. Only the newest pop per table, so they don't stack.
+    // Deliveries: the order dot fades out and a small "+1" drifts up (newest
+    // per table only, so they never stack).
     std::vector<double> newest(cells, -1.0);
     for (const auto& [dropoff, t0] : a.pops) newest[g.index(tableOf(g, dropoff))] = t0;
-    for (int i = 0; i < static_cast<int>(cells); ++i) {
+    for (std::size_t i = 0; i < cells; ++i) {
         if (newest[i] < 0) continue;
-        const double t0 = newest[i];
-        const float age = static_cast<float>(a.runTime - t0), k = age / static_cast<float>(kPopSeconds);
-        const Vector2 c = at(g.cellAt(i));
-        const unsigned char fade = static_cast<unsigned char>(255 * std::clamp(1.0f - k, 0.0f, 1.0f));
-        const float grow = std::min(1.0f, age / 0.15f);
-        const Vector2 star{c.x + kCell * 0.95f, c.y - kCell * 0.75f - k * 10};
-        drawStar(star, 9.0f * grow + 2.0f, Color{kOutline.r, kOutline.g, kOutline.b, fade});
-        drawStar(star, 9.0f * grow, Color{kStar.r, kStar.g, kStar.b, fade});
-        const int tx = static_cast<int>(c.x + kCell * 0.42f), ty = static_cast<int>(c.y - kCell * 1.3f - k * 18);
-        DrawText("+1", tx + 1, ty + 1, 18, Color{kOutline.r, kOutline.g, kOutline.b, fade});
-        DrawText("+1", tx, ty, 18, Color{kCounter.r, kCounter.g, kCounter.b, fade});
+        const float k = static_cast<float>((a.runTime - newest[i]) / kPopSeconds);
+        const Vector2 c = at(g.cellAt(static_cast<int>(i)));
+        DrawCircleV(c, 3.5f, withAlpha(kAmber, 1.0f - k));
+        text("+1", c.x - 6, c.y - 18 - 12 * k, 12, withAlpha(kMuted, 1.0f - k));
     }
 
-    char hud[160];
-    std::snprintf(hud, sizeof hud, "orders served %lld    %.0f / min    robots stuck %d    tick %lld%s",
-                  a.sim->stats().deliveries, deliveriesPerMinute(a), stuck, a.sim->stats().ticks,
-                  a.paused ? "    paused" : "");
-    DrawText(hud, kMargin, 10, 18, kText);
-    const char* keys = "keys: space  +/-  up/down  P";
-    DrawText(keys, a.width - kMargin - MeasureText(keys, 14), 13, 14, kDimText);
+    // Paths: hovered or pinned robot, or all with T. Planned cells while
+    // there are any (space-time A*, CBS), then straight to the goal.
+    const std::vector<Vector2> pos = robotPositions(a);
+    const int hovered = robotAt(a, GetMousePosition());
+    for (const ww::RobotView& r : robots) {
+        if (!a.showAllPaths && r.id != hovered && r.id != a.selected) continue;
+        std::vector<Vector2> pts{pos[static_cast<std::size_t>(r.id)]};
+        bool reached = r.cell == r.goal;
+        for (std::size_t j = 1; j < r.route.size() && !reached; ++j) {
+            pts.push_back(at(r.route[j]));
+            reached = r.route[j] == r.goal;
+        }
+        if (!reached) pts.push_back(at(r.goal));
+        drawDottedPath(pts);
+    }
+    for (const ww::RobotView& r : robots) {
+        const auto id = static_cast<std::size_t>(r.id);
+        drawRobot(pos[id], r.carrying, id < a.facing.size() ? a.facing[id] : Cell{1, 0}, r.id == a.selected);
+    }
 
+    // HUD: one quiet line.
+    char hud[96];
+    std::snprintf(hud, sizeof hud, "%lld served · %.0f/min · %d stuck%s", a.sim->stats().deliveries,
+                  deliveriesPerMinute(a), stuck, a.paused ? " · paused" : "");
+    text(hud, kMargin, 8, 15, kInk);
+    const std::string keys = "space pause · +/- speed · up/down robots · P planner · T paths";
+    text(keys, a.width - kMargin - measure(keys, 12), 10, 12, kMuted);
+
+    // Controls: quiet text buttons; the active planner in off-white with a
+    // thin amber underline.
     const Vector2 mouse = GetMousePosition();
     for (const Button& b : layoutButtons(a)) {
-        const int tw = MeasureText(b.label.c_str(), 16);
-        const int tx = static_cast<int>(b.rect.x + (b.rect.width - tw) / 2), ty = static_cast<int>(b.rect.y + 6);
-        if (b.action == Action::None) {
-            DrawText(b.label.c_str(), tx, ty, 16, kText);
-            continue;
-        }
-        const bool hover = b.enabled && CheckCollisionPointRec(mouse, b.rect);
-        const Color fill = b.active ? kCounter : hover ? kButtonHover : kButton;
-        DrawRectangleRounded(b.rect, 0.35f, 6, fill);
-        DrawText(b.label.c_str(), tx, ty, 16, b.active ? kTable : b.enabled ? kButtonText : kButtonDisabled);
+        const float tw = measure(b.label, kButtonText);
+        const float tx = b.rect.x + (b.rect.width - tw) / 2, ty = b.rect.y + 6;
+        Color c = kMuted;
+        if (b.action == Action::None) c = kMuted;
+        else if (!b.enabled) c = kDisabled;
+        else if (b.active || CheckCollisionPointRec(mouse, b.rect)) c = kInk;
+        text(b.label, tx, ty, kButtonText, c);
+        if (b.active) DrawRectangleRec({tx, ty + kButtonText + 3, tw, 1.5f}, kAmber);
     }
 }
 
@@ -678,7 +544,7 @@ int record(App& a) {
         EndTextureMode();
 
         BeginDrawing();  // mirror to the window so progress is visible
-        ClearBackground(kOutline);
+        ClearBackground(kBg);
         DrawTexturePro(target.texture, {0, 0, float(target.texture.width), -float(target.texture.height)},
                        {0, 0, float(a.width), float(a.height)}, {0, 0}, 0, WHITE);
         EndDrawing();
@@ -773,18 +639,21 @@ int main(int argc, char** argv) {
     SetConfigFlags(FLAG_MSAA_4X_HINT | FLAG_VSYNC_HINT);
     SetTraceLogLevel(LOG_WARNING);
     InitWindow(a.width, a.height, "Rush Hour Café");
+    loadUiFont();
 
 #if defined(__EMSCRIPTEN__)
     emscripten_set_main_loop_arg(frame, &a, 0, 1);
 #else
+    int rc = 0;
     if (!a.opt.recordPath.empty()) {
-        int rc = record(a);
-        CloseWindow();
-        return rc;
+        rc = record(a);
+    } else {
+        SetTargetFPS(60);
+        while (!WindowShouldClose()) frame(&a);
     }
-    SetTargetFPS(60);
-    while (!WindowShouldClose()) frame(&a);
+    UnloadFont(gFont);
     CloseWindow();
+    return rc;
 #endif
     return 0;
 }
