@@ -7,7 +7,8 @@
 //
 // Keys: space pause, +/- speed, up/down robot count, P cycle planner,
 // T show all planned paths. Every control is also clickable (mouse or
-// touch); hover or click a robot to see its planned path.
+// touch); hover or click a robot to see its planned path. An intro card
+// explains the scene on launch (skip with --no-intro); "i" reopens it.
 
 #include <algorithm>
 #include <cmath>
@@ -84,10 +85,11 @@ Font gFont{};
 
 // Given: an open window. Approach: rasterise the embedded TTF once at a size
 // big enough for the 2x GIF render, with bilinear filtering for the smaller
-// sizes we draw. ASCII is all the UI needs.
+// sizes we draw. ASCII plus the é in "Café".
 void loadUiFont() {
     std::vector<int> codepoints;
     for (int c = 32; c < 127; ++c) codepoints.push_back(c);
+    codepoints.push_back(0x00E9);
     gFont = LoadFontFromMemory(".ttf", kUiFontData, static_cast<int>(sizeof(kUiFontData)), 32, codepoints.data(),
                                static_cast<int>(codepoints.size()));
     SetTextureFilter(gFont.texture, TEXTURE_FILTER_BILINEAR);
@@ -113,6 +115,7 @@ struct Options {
     std::string recordPath;
     int recordFrames = 240;
     int recordFps = 30;
+    bool intro = true;
 };
 
 struct App {
@@ -125,6 +128,7 @@ struct App {
     std::vector<Rectangle> shelves;
     bool paused = false;
     bool showAllPaths = false;
+    bool showIntro = false;  // the intro card is up; the run waits behind it
     int selected = -1;  // robot id whose path stays visible, -1 for none
     double runTime = 0.0;  // seconds spent unpaused
     std::deque<std::pair<double, long long>> rateSamples;
@@ -187,7 +191,7 @@ void restart(App& a) {
     a.selected = -1;
 }
 
-enum class Action { None, Pause, Slower, Faster, FewerRobots, MoreRobots, Planner };
+enum class Action { None, Pause, Slower, Faster, FewerRobots, MoreRobots, Planner, Info };
 
 // A clickable (or label-only, Action::None) item. Items sharing a group
 // sit inside one pill; planner buttons have group -1 and draw as keys.
@@ -245,6 +249,8 @@ std::vector<Button> layoutButtons(const App& a) {
     std::snprintf(value, sizeof value, "%d robots", a.opt.robots);
     add(value, Action::None, true, 2);
     add("+", Action::MoreRobots, a.opt.robots < maxRobots(a), 9);
+    nextPill();
+    add("i", Action::Info, true, 10);
 
     // Planner buttons, right-aligned.
     x = static_cast<float>(a.width - kMargin);
@@ -294,6 +300,7 @@ void apply(App& a, Action act, int planner = -1) {
         case Action::FewerRobots: setRobots(a, a.opt.robots - 1); break;
         case Action::MoreRobots: setRobots(a, a.opt.robots + 1); break;
         case Action::Planner: setPlanner(a, planner); break;
+        case Action::Info: a.showIntro = true; break;
         case Action::None: break;
     }
 }
@@ -323,9 +330,14 @@ int robotAt(const App& a, Vector2 p) {
     return -1;
 }
 
-// Given: a click position. Approach: buttons first (same layout as drawn);
-// otherwise clicking a robot pins its path, clicking elsewhere unpins.
+// Given: a click position. Approach: with the intro card up, any click
+// starts the run. Otherwise buttons first (same layout as drawn), then
+// clicking a robot pins its path, clicking elsewhere unpins.
 void clickAt(App& a, Vector2 at) {
+    if (a.showIntro) {
+        a.showIntro = false;
+        return;
+    }
     for (const Button& b : layoutButtons(a)) {
         if (b.action != Action::None && b.enabled && CheckCollisionPointRec(at, b.rect)) {
             apply(a, b.action, b.planner);
@@ -341,6 +353,16 @@ void clickAt(App& a, Vector2 at) {
 // no button; desktop reports a mouse press as a touch too, hence the else).
 void handleInput(App& a) {
     auto pressed = [](int key) { return IsKeyPressed(key) || IsKeyPressedRepeat(key); };
+    if (a.showIntro && (IsKeyPressed(KEY_SPACE) || IsKeyPressed(KEY_ENTER) || IsKeyPressed(KEY_KP_ENTER))) {
+        a.showIntro = false;
+        return;
+    }
+    if (a.showIntro) {  // only a click (below) closes the card; other keys wait
+        if (IsMouseButtonPressed(MOUSE_BUTTON_LEFT) || (GetTouchPointCount() > 0 && a.prevTouches == 0))
+            clickAt(a, GetMousePosition());
+        a.prevTouches = GetTouchPointCount();
+        return;
+    }
     if (IsKeyPressed(KEY_SPACE)) apply(a, Action::Pause);
     if (pressed(KEY_EQUAL) || pressed(KEY_KP_ADD)) apply(a, Action::Faster);
     if (pressed(KEY_MINUS) || pressed(KEY_KP_SUBTRACT)) apply(a, Action::Slower);
@@ -368,7 +390,7 @@ void handleInput(App& a) {
 // positions so drawing can lerp prev -> cur by FixedTimestep::alpha(), note
 // which way each robot moved, and catch deliveries for the pop.
 void update(App& a, double frameSeconds) {
-    if (a.paused) return;
+    if (a.paused || a.showIntro) return;
     a.runTime += frameSeconds;
     a.timestep.advance(frameSeconds, [&] {
         a.prev = a.cur;
@@ -437,8 +459,15 @@ void drawTable(Vector2 c) {
     }
 }
 
-void drawMat(Vector2 c, float size) {
-    DrawRectangleRounded({c.x - size / 2, c.y - size / 2, size, size}, 0.3f, 6, kMat);
+// A thin yellow mat along one edge of a cell: `toward` is the side the
+// counter is on, so the mat hugs the counter.
+void drawMat(Vector2 c, float length, Cell toward) {
+    const float thick = std::max(3.0f, length * 0.2f), off = kCell * 0.5f - thick / 2 - 2.5f;
+    const bool across = toward.y != 0;  // counter above/below: a horizontal strip
+    const Vector2 m{c.x + toward.x * off, c.y + toward.y * off};
+    const Rectangle r = across ? Rectangle{m.x - length / 2, m.y - thick / 2, length, thick}
+                               : Rectangle{m.x - thick / 2, m.y - length / 2, thick, length};
+    DrawRectangleRounded(r, 1.0f, 6, kMat);
 }
 
 // White plate with a coral dish on it, about `w` wide.
@@ -523,6 +552,70 @@ void drawPill(Rectangle r) {
     DrawRectangleRounded(r, 1.0f, 12, kWhite);
 }
 
+// Legend: tiny drawn icons with small brown labels on one line. Returns
+// the width it takes; with draw = false it only measures.
+float drawLegend(float x, float y, bool draw = true) {
+    const float start = x;
+    auto item = [&](auto icon, const char* label) {
+        if (draw) {
+            icon(Vector2{x, y});
+            text(label, x + 12, y - 7, 12, kLine);
+        }
+        x += 12 + measure(label, 12) + 22;
+    };
+    item([&](Vector2 c) { drawRobot({c.x, c.y + 1}, false, Cell{1, 0}, 11); }, "robot waiter");
+    item([&](Vector2 c) { drawRobot({c.x, c.y + 2}, true, Cell{1, 0}, 11); }, "carrying an order");
+    item([&](Vector2 c) { drawBubble({c.x, c.y + kCell * 0.62f}, 0.8f, 1.0f, 0); }, "order waiting");
+    item([&](Vector2 c) {
+        DrawRectangleRounded({c.x - 6, c.y - 6, 12, 2.5f}, 1.0f, 4, kCounter);
+        DrawRectangleRounded({c.x - 5.5f, c.y - 1.5f, 11, 3.5f}, 1.0f, 4, kMat);
+    }, "pickup spot");
+    item([&](Vector2 c) { drawPlant({c.x, c.y + 1}, 14); }, "plant (obstacle)");
+    return x - 22 - start;
+}
+
+// Given: the scene drawn behind. Approach: dim it, then a white card with
+// the title, what's going on, the legend, one line per planner and a Start
+// button. Any click, Space or Enter starts (see handleInput / clickAt).
+void drawIntro(const App& a) {
+    DrawRectangle(0, 0, a.width, a.height, withAlpha(kLine, 0.28f));
+    const float w = 560, h = 292;
+    const Rectangle card{(a.width - w) / 2, (a.height - h) / 2, w, h};
+    outlinedRect(card, 12, kWhite);
+    float x = card.x + 28, y = card.y + 22;
+    text("Rush Hour Caf\u00e9", x, y, 24, kLine);
+    y += 38;
+    const char* story[] = {
+        "It's lunch rush. Robot waiters carry orders from the kitchen to hungry tables.",
+        "The hard part isn't one robot; it's dozens sharing narrow aisles without",
+        "colliding or getting stuck.",
+    };
+    for (const char* line : story) {
+        text(line, x, y, 13, kLine);
+        y += 19;
+    }
+    y += 14;
+    drawLegend(card.x + (w - drawLegend(0, 0, false)) / 2 + 6, y + 6);
+    y += 30;
+    const char* planners[][2] = {
+        {"Local:", "each robot just avoids its neighbours"},
+        {"Space-time A*:", "robots book their path in time, one by one"},
+        {"CBS:", "robots are planned together, resolving conflicts"},
+    };
+    for (const auto& p : planners) {
+        text(p[0], x, y, 13, kCounter);
+        text(p[1], x + 104, y, 13, kLine);
+        y += 20;
+    }
+    const std::string start = "Start";
+    const float bw = measure(start, 14) + 36;
+    const Rectangle btn{card.x + w - 28 - bw, card.y + h - 50, bw, 28};
+    DrawRectangleRounded({btn.x - 1.8f, btn.y - 1.8f, btn.width + 3.6f, btn.height + 4.8f}, 0.35f, 8, kLine);
+    DrawRectangleRounded(btn, 0.32f, 8, kRobot);
+    text(start, btn.x + (bw - measure(start, 14)) / 2, btn.y + 6, 14, kLine);
+    text("Try switching planners while it runs.", x, btn.y + 7, 12, kLineSoft);
+}
+
 // Given: current state. Approach: draw the scene in window coordinates; the
 // caller decides the target (screen, or an offscreen texture for recording).
 void drawScene(const App& a) {
@@ -551,7 +644,17 @@ void drawScene(const App& a) {
             if (wallAt(1, 0)) DrawRectangleRec({px + kCell, py - kFrame, kFrame, kCell + 2 * kFrame}, kLine);
         }
     }
-    for (Cell f : g.pickFaces()) drawMat(at(f), kCell * 0.62f);
+    for (Cell f : g.pickFaces()) {
+        Cell toward{0, -1};
+        for (Cell d : ww::kNeighbors) {
+            const Cell n{f.x + d.x, f.y + d.y};
+            if (g.inBounds(n) && g.at(n) == ww::Tile::Shelf) {
+                toward = d;
+                break;
+            }
+        }
+        drawMat(at(f), kCell * 0.72f, toward);
+    }
     for (const Rectangle& r : a.shelves) {
         outlinedRect(r, 5.0f, kCounter);
         const std::string label = "Kitchen";
@@ -584,9 +687,23 @@ void drawScene(const App& a) {
         if (!reached) pts.push_back(at(target));
         return pts;
     };
+    // A carrying robot's line goes to its drop-off cell and then ends on the
+    // edge of the table it serves, facing the robot, under the bubble.
+    auto toTable = [&](const ww::RobotView& r) {
+        std::vector<Vector2> pts = pathTo(r, r.dropoff);
+        const Cell table = tableOf(g, r.dropoff);
+        if (!(table == r.dropoff)) {
+            const Vector2 t = at(table), from = pts.back();
+            const float dx = from.x - t.x, dy = from.y - t.y, len = std::max(1.0f, std::hypot(dx, dy));
+            const float rim = kCell * 0.3f + 3.0f;
+            pts.push_back({t.x + dx / len * rim, t.y + dy / len * rim});
+        }
+        return pts;
+    };
     for (const ww::RobotView& r : robots) {
-        if (a.showAllPaths || r.id == hovered || r.id == a.selected) drawDottedPath(pathTo(r, r.goal), withAlpha(kLine, 0.7f));
-        else if (r.carrying) drawDottedPath(pathTo(r, r.dropoff), withAlpha(kLine, 0.35f));
+        if (a.showAllPaths || r.id == hovered || r.id == a.selected)
+            drawDottedPath(r.carrying ? toTable(r) : pathTo(r, r.goal), withAlpha(kLine, 0.7f));
+        else if (r.carrying) drawDottedPath(toTable(r), withAlpha(kLine, 0.35f));
     }
     for (const ww::RobotView& r : robots) {
         const auto id = static_cast<std::size_t>(r.id);
@@ -633,19 +750,7 @@ void drawScene(const App& a) {
     std::snprintf(rate, sizeof rate, "%.0f / min%s", deliveriesPerMinute(a), a.paused ? "  (paused)" : "");
     text(rate, badge.x - 10 - measure(rate, 12), badge.y + 7, 12, kLineSoft);
 
-    // Legend under the floor: tiny drawn icons, one line of small brown text.
-    const float ly = static_cast<float>(kHudH + a.gridH + kLegendH / 2 + 2);
-    float lx = kMargin + 8;
-    auto item = [&](auto icon, const char* label) {
-        icon(Vector2{lx, ly});
-        text(label, lx + 12, ly - 7, 12, kLine);
-        lx += 12 + measure(label, 12) + 22;
-    };
-    item([&](Vector2 c) { drawRobot({c.x, c.y + 1}, false, Cell{1, 0}, 11); }, "robot waiter");
-    item([&](Vector2 c) { drawRobot({c.x, c.y + 2}, true, Cell{1, 0}, 11); }, "carrying an order");
-    item([&](Vector2 c) { drawBubble({c.x, c.y + kCell * 0.62f}, 0.8f, 1.0f, 0); }, "order waiting");
-    item([&](Vector2 c) { drawMat(c, 11); }, "pickup spot");
-    item([&](Vector2 c) { drawPlant({c.x, c.y + 1}, 14); }, "plant (obstacle)");
+    drawLegend(kMargin + 8, static_cast<float>(kHudH + a.gridH + kLegendH / 2 + 2));
 
     // Bottom: pills on the left, planner keys on the right.
     const std::vector<Button> buttons = layoutButtons(a);
@@ -673,6 +778,7 @@ void drawScene(const App& a) {
         const Color c = !b.enabled ? withAlpha(kLine, 0.3f) : (b.action == Action::None ? kLineSoft : kLine);
         text(b.label, tx, ty, kButtonText, hover && b.group >= 0 ? kCounter : c);
     }
+    if (a.showIntro) drawIntro(a);
 }
 
 void draw(const App& a) {
@@ -745,7 +851,7 @@ std::string loadMap(const std::string& path) {
 
 [[noreturn]] void usage(int code) {
     std::cout << "usage: viewer [--robots N] [--seed S] [--hz 2|4|8|15|30|60|120] [--map FILE|cafe|warehouse]\n"
-                 "              [--planner local|stastar|cbs] [--record OUT.gif [--frames N] [--fps N]]\n";
+                 "              [--planner local|stastar|cbs] [--no-intro] [--record OUT.gif [--frames N] [--fps N]]\n";
     std::exit(code);
 }
 
@@ -773,6 +879,7 @@ Options parseArgs(int argc, char** argv) {
             else if (arg == "--record") o.recordPath = next();
             else if (arg == "--frames") o.recordFrames = std::stoi(next());
             else if (arg == "--fps") o.recordFps = std::clamp(std::stoi(next()), 1, 50);
+            else if (arg == "--no-intro") o.intro = false;
             else if (arg == "-h" || arg == "--help") usage(0);
             else usage(1);
         } catch (const std::logic_error&) {
@@ -805,6 +912,7 @@ int main(int argc, char** argv) {
     a.height = kHudH + a.gridH + kLegendH + kFooterH;
     a.gridX = (a.width - g.width() * kCell) / 2;
     a.shelves = shelfBlocks(g, a.gridX);
+    a.showIntro = a.opt.intro && a.opt.recordPath.empty();
 
     SetConfigFlags(FLAG_MSAA_4X_HINT | FLAG_VSYNC_HINT);
     SetTraceLogLevel(LOG_WARNING);

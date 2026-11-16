@@ -50,19 +50,25 @@ hash) on the first run.
 ```sh
 cmake -S . -B build -DWW_VIEWER=ON
 cmake --build build -j
-./build/viewer                           # the café, 16 robots
+./build/viewer                           # the café, 16 robots (starts with an intro card)
+./build/viewer --no-intro                # straight into the run
 ./build/viewer --robots 32 --hz 15 --seed 3 --planner cbs
 ./build/viewer --map warehouse           # the benchmark map, same theme
 ./build/viewer --robots 24 --planner cbs --record docs/viewer.gif --frames 125 --fps 15  # the GIF above
 ```
 
+On launch an intro card explains the scene and the three planners; Start
+(or Space, Enter, any click) begins the run, and the "i" pill reopens it.
+
 How to read it (the legend under the floor says the same):
 - A blue robot with an antenna is heading to the kitchen; one with a plate
-  on top is carrying an order, and a faint dotted line leads to its table.
+  on top is carrying an order, and a faint dotted line leads to the table
+  it's serving.
 - A speech bubble with a cup over a table is an order waiting there; a coral
   badge counts several. When it's delivered, the bubble pops and a "+1"
   floats up.
-- Yellow mats under the counter are the pickup spots; plants are obstacles.
+- Thin yellow mats along the counter mark the pickup spots; plants are
+  obstacles.
 - Hover or click a robot to see its full planned path; <kbd>T</kbd> shows
   every robot's path.
 

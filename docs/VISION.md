@@ -29,7 +29,7 @@ small shapes with room around them, no shadows or gradients.
 |---|---|
 | Lines | soft brown `#5A4636`, ~1.5 px (2 px for the floor frame) |
 | Page / floor | `#FBF4E9` / a very faint checker `#FAF2E6` and `#F4E8D6` |
-| Kitchen counter | muted coral `#D27A68` with "Kitchen" in white; pickup mats `#EBCB82` |
+| Kitchen counter | muted coral `#D27A68` with "Kitchen" in white; pickup spots are thin `#EBCB82` mats along its edge |
 | Tables | white, thin outline, faint dashed rim `#E9C7C0`, ~60% of a cell |
 | Plants | leaves `#8FC08A` / `#9CCB96`, pots `#C98B63`, ~55% of a cell |
 | Robots | dusty blue `#8CC4E0`, ~50% of a cell |
@@ -41,7 +41,8 @@ small shapes with room around them, no shadows or gradients.
   top, about the robot's width, and no antenna.
 - **Orders:** a small white speech bubble with a brown cup above a table
   with a waiting order, and a small coral number badge for more than one.
-- **Flow:** every carrying robot has a faint dotted brown line to its table.
+- **Flow:** every carrying robot has a faint dotted brown line that ends at
+  the edge of the table it's serving, under that table's bubble.
   Hover or click a robot, or press T, for full planned paths.
 - **Delivery:** the bubble pops away and a small "+1" floats up.
 - **Legend:** one line under the floor with a tiny drawn icon for robot
@@ -50,7 +51,12 @@ small shapes with room around them, no shadows or gradients.
   left, a pale yellow "★ N served" badge on the right. Along the bottom,
   small pills (pause, speed, "N stuck", "N robots") and planner buttons with
   a 1.8 px outline and a thicker bottom edge; the active one is filled blue.
+- **Intro card:** on launch, a white card over the dimmed, paused café:
+  the title, a short story, the legend, one line per planner and a Start
+  button. The "i" pill reopens it.
 - Font: IBM Plex Sans (SIL Open Font License), committed in `assets/fonts/`.
+
+![The intro card](intro.png)
 
 ## Game loop
 
