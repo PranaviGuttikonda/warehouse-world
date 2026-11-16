@@ -35,7 +35,8 @@ std::vector<RobotView> Simulation::robots() const {
     std::vector<RobotView> out;
     for (Entity e : reg.pool<Robot>().entities()) {
         const Task& t = reg.get<Task>(e);
-        out.push_back({reg.get<Robot>(e).id, reg.get<Position>(e).cell, t.goal(), t.carrying()});
+        const Robot& r = reg.get<Robot>(e);
+        out.push_back({r.id, reg.get<Position>(e).cell, t.goal(), t.carrying(), r.waitTicks});
     }
     std::sort(out.begin(), out.end(), [](const RobotView& a, const RobotView& b) { return a.id < b.id; });
     return out;

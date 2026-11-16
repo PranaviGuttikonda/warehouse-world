@@ -17,6 +17,7 @@ struct RobotView {
     Cell cell;
     Cell goal;
     bool carrying;
+    int waitTicks;  // consecutive ticks blocked
 };
 
 /// The whole world: static grid + robots + systems, advanced one tick at a time.
