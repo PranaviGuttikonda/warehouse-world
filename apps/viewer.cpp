@@ -1,10 +1,11 @@
 // viewer: graphical view of the warehouse robot world (raylib).
 //
 //   ./viewer                              default map, 16 robots
-//   ./viewer --robots 24 --hz 15 --seed 3
+//   ./viewer --robots 24 --hz 15 --seed 3 --planner stastar
 //   ./viewer --record docs/viewer.gif     write a short GIF and exit
 //
-// Keys: space pause, +/- speed, up/down robot count.
+// Keys: space pause, +/- speed, up/down robot count, P cycle planner.
+// Every control is also a button in the bottom bar (mouse or touch).
 
 #include <algorithm>
 #include <cmath>
@@ -35,7 +36,8 @@ using ww::Cell;
 constexpr int kCell = 32;
 constexpr int kMargin = 16;
 constexpr int kHudH = 36;
-constexpr int kFooterH = 28;
+constexpr int kFooterH = 48;
+constexpr int kMinWidth = 720;  // room for the control bar on small maps
 constexpr double kHzSteps[] = {2, 4, 8, 15, 30, 60, 120};
 constexpr double kRateWindow = 10.0;  // seconds of running time for deliveries/min
 
@@ -48,11 +50,24 @@ const Color kToShelf{150, 118, 255, 255};
 const Color kCarrying{255, 127, 107, 255};
 const Color kText{205, 209, 219, 255};
 const Color kDimText{110, 116, 130, 255};
+const Color kButton{32, 35, 43, 255};
+const Color kButtonHover{45, 49, 60, 255};
+
+// Planner buttons, in P-key cycling order. CBS goes here once it exists.
+struct PlannerChoice {
+    ww::Planner planner;
+    const char* label;
+};
+constexpr PlannerChoice kPlanners[] = {
+    {ww::Planner::Local, "Local"},
+    {ww::Planner::SpaceTime, "Space-time A*"},
+};
 
 struct Options {
     int robots = 16;
     std::uint64_t seed = 42;
     int hzIndex = 2;  // 8 Hz, same as the terminal app
+    ww::Planner planner = ww::Planner::Local;
     std::string mapPath;
     std::string recordPath;
     int recordFrames = 240;
@@ -69,13 +84,15 @@ struct App {
     double runTime = 0.0;  // seconds spent unpaused
     std::deque<std::pair<double, long long>> rateSamples;
     int width = 0, height = 0;
+    int gridX = kMargin;  // left edge of the grid (centred when the window is wider)
+    int prevTouches = 0;
 };
 
 double hz(const App& a) { return kHzSteps[a.opt.hzIndex]; }
 
 // Given: the grid. Approach: flood-fill each shelf block and keep its
 // bounding box, so a block draws as one rounded rect instead of beads.
-std::vector<Rectangle> shelfBlocks(const ww::Grid& g) {
+std::vector<Rectangle> shelfBlocks(const ww::Grid& g, int originX) {
     std::vector<Rectangle> out;
     std::vector<bool> seen(static_cast<std::size_t>(g.width() * g.height()), false);
     for (int i = 0; i < g.width() * g.height(); ++i) {
@@ -97,7 +114,7 @@ std::vector<Rectangle> shelfBlocks(const ww::Grid& g) {
             }
         }
         const float inset = 4.0f;
-        out.push_back({kMargin + x0 * kCell + inset, kHudH + y0 * kCell + inset,
+        out.push_back({originX + x0 * kCell + inset, kHudH + y0 * kCell + inset,
                        (x1 - x0 + 1) * kCell - 2 * inset, (y1 - y0 + 1) * kCell - 2 * inset});
     }
     return out;
@@ -109,39 +126,143 @@ void snapshot(const ww::Simulation& sim, std::vector<Cell>& into) {
     for (const auto& r : robots) into[static_cast<std::size_t>(r.id)] = r.cell;
 }
 
-// Given: options. Approach: rebuild the world from scratch; keeps the seed so
-// the same count always gives the same run.
+// Given: options. Approach: rebuild the world from scratch with the same
+// seed, so switching planner or robot count always compares like with like.
 void restart(App& a) {
-    a.sim = std::make_unique<ww::Simulation>(ww::Grid::parse(a.mapText),
-                                             ww::Simulation::Config{a.opt.robots, a.opt.seed});
+    a.sim = std::make_unique<ww::Simulation>(
+        ww::Grid::parse(a.mapText), ww::Simulation::Config{a.opt.robots, a.opt.seed, a.opt.planner});
     a.timestep = ww::FixedTimestep(1.0 / hz(a));
     snapshot(*a.sim, a.cur);
     a.prev = a.cur;
     a.rateSamples.clear();
 }
 
+enum class Action { None, Pause, Slower, Faster, FewerRobots, MoreRobots, Planner };
+
+struct Button {
+    Rectangle rect;
+    std::string label;
+    Action action;
+    int planner = -1;     // index into kPlanners for Action::Planner
+    bool active = false;  // highlighted (current planner)
+    bool enabled = true;
+};
+
+int maxRobots(const App& a) { return static_cast<int>(a.sim->grid().floorCells().size()); }
+
+// Given: app state. Approach: one layout used for both drawing and hit
+// testing, so what you see is what you click. Value labels are buttons
+// with Action::None.
+std::vector<Button> layoutButtons(const App& a) {
+    std::vector<Button> out;
+    const float y = static_cast<float>(a.height - kFooterH + 10), h = 28;
+    float x = kMargin;
+    auto add = [&](float w, std::string label, Action act, bool enabled = true) {
+        out.push_back({{x, y, w, h}, std::move(label), act, -1, false, enabled});
+        x += w;
+    };
+    const int last = static_cast<int>(std::size(kHzSteps)) - 1;
+    char text[32];
+
+    add(72, a.paused ? "Play" : "Pause", Action::Pause);
+    x += 16;
+    add(28, "-", Action::Slower, a.opt.hzIndex > 0);
+    std::snprintf(text, sizeof text, "%g Hz", hz(a));
+    add(64, text, Action::None);
+    add(28, "+", Action::Faster, a.opt.hzIndex < last);
+    x += 16;
+    add(28, "-", Action::FewerRobots, a.opt.robots > 1);
+    std::snprintf(text, sizeof text, "%d robots", a.opt.robots);
+    add(96, text, Action::None);
+    add(28, "+", Action::MoreRobots, a.opt.robots < maxRobots(a));
+
+    // Planner buttons, right-aligned.
+    x = static_cast<float>(a.width - kMargin);
+    for (int i = static_cast<int>(std::size(kPlanners)) - 1; i >= 0; --i) {
+        const float w = static_cast<float>(MeasureText(kPlanners[i].label, 16) + 24);
+        x -= w;
+        out.push_back({{x, y, w, h}, kPlanners[i].label, Action::Planner, i,
+                       kPlanners[i].planner == a.opt.planner, true});
+        x -= 8;
+    }
+    return out;
+}
+
+int plannerIndex(const App& a) {
+    for (int i = 0; i < static_cast<int>(std::size(kPlanners)); ++i)
+        if (kPlanners[i].planner == a.opt.planner) return i;
+    return 0;
+}
+
+void setHz(App& a, int hzIndex) {
+    hzIndex = std::clamp(hzIndex, 0, static_cast<int>(std::size(kHzSteps)) - 1);
+    if (hzIndex == a.opt.hzIndex) return;
+    a.opt.hzIndex = hzIndex;
+    a.timestep = ww::FixedTimestep(1.0 / hz(a));
+    a.rateSamples.clear();
+}
+
+void setRobots(App& a, int robots) {
+    robots = std::clamp(robots, 1, maxRobots(a));
+    if (robots == a.opt.robots) return;
+    a.opt.robots = robots;
+    restart(a);
+}
+
+void setPlanner(App& a, int index) {
+    const ww::Planner p = kPlanners[index].planner;
+    if (p == a.opt.planner) return;
+    a.opt.planner = p;
+    restart(a);
+}
+
+void apply(App& a, Action act, int planner = -1) {
+    switch (act) {
+        case Action::Pause: a.paused = !a.paused; break;
+        case Action::Slower: setHz(a, a.opt.hzIndex - 1); break;
+        case Action::Faster: setHz(a, a.opt.hzIndex + 1); break;
+        case Action::FewerRobots: setRobots(a, a.opt.robots - 1); break;
+        case Action::MoreRobots: setRobots(a, a.opt.robots + 1); break;
+        case Action::Planner: setPlanner(a, planner); break;
+        case Action::None: break;
+    }
+}
+
+// Given: a click position. Approach: hit-test the same layout that is drawn.
+void clickAt(App& a, Vector2 at) {
+    for (const Button& b : layoutButtons(a)) {
+        if (b.action != Action::None && b.enabled && CheckCollisionPointRec(at, b.rect)) {
+            apply(a, b.action, b.planner);
+            return;
+        }
+    }
+}
+
+// Given: this frame's input. Approach: a click is a mouse press, or else a
+// touch that began this frame (raylib's web touch moves the mouse but sets
+// no button; desktop reports a mouse press as a touch too, hence the else).
 void handleInput(App& a) {
     auto pressed = [](int key) { return IsKeyPressed(key) || IsKeyPressedRepeat(key); };
-    if (IsKeyPressed(KEY_SPACE)) a.paused = !a.paused;
+    if (IsKeyPressed(KEY_SPACE)) apply(a, Action::Pause);
+    if (pressed(KEY_EQUAL) || pressed(KEY_KP_ADD)) apply(a, Action::Faster);
+    if (pressed(KEY_MINUS) || pressed(KEY_KP_SUBTRACT)) apply(a, Action::Slower);
+    if (pressed(KEY_UP)) apply(a, Action::MoreRobots);
+    if (pressed(KEY_DOWN)) apply(a, Action::FewerRobots);
+    if (IsKeyPressed(KEY_P))
+        apply(a, Action::Planner, (plannerIndex(a) + 1) % static_cast<int>(std::size(kPlanners)));
 
-    int hzIndex = a.opt.hzIndex;
-    if (pressed(KEY_EQUAL) || pressed(KEY_KP_ADD)) ++hzIndex;
-    if (pressed(KEY_MINUS) || pressed(KEY_KP_SUBTRACT)) --hzIndex;
-    hzIndex = std::clamp(hzIndex, 0, static_cast<int>(std::size(kHzSteps)) - 1);
-    if (hzIndex != a.opt.hzIndex) {
-        a.opt.hzIndex = hzIndex;
-        a.timestep = ww::FixedTimestep(1.0 / hz(a));
-        a.rateSamples.clear();
+    const int touches = GetTouchPointCount();
+    bool clicked = false;
+    Vector2 at{};
+    if (IsMouseButtonPressed(MOUSE_BUTTON_LEFT)) {
+        clicked = true;
+        at = GetMousePosition();
+    } else if (touches > 0 && a.prevTouches == 0) {
+        clicked = true;
+        at = GetTouchPosition(0);
     }
-
-    int robots = a.opt.robots;
-    if (pressed(KEY_UP)) ++robots;
-    if (pressed(KEY_DOWN)) --robots;
-    robots = std::clamp(robots, 1, static_cast<int>(a.sim->grid().floorCells().size()));
-    if (robots != a.opt.robots) {
-        a.opt.robots = robots;
-        restart(a);
-    }
+    a.prevTouches = touches;
+    if (clicked) clickAt(a, at);
 }
 
 // Given: frame time. Approach: run fixed ticks; before each, keep the old
@@ -174,7 +295,7 @@ void drawScene(const App& a) {
 
     for (int y = 0; y < g.height(); ++y) {
         for (int x = 0; x < g.width(); ++x) {
-            const int px = kMargin + x * kCell, py = kHudH + y * kCell;
+            const int px = a.gridX + x * kCell, py = kHudH + y * kCell;
             switch (g.at({x, y})) {
                 case ww::Tile::Wall: DrawRectangle(px, py, kCell, kCell, kWall); break;
                 case ww::Tile::Floor: DrawCircle(px + kCell / 2, py + kCell / 2, 1.5f, kFloorDot); break;
@@ -196,17 +317,31 @@ void drawScene(const App& a) {
         const Cell from = id < a.prev.size() ? a.prev[id] : r.cell;
         const Cell to = id < a.cur.size() ? a.cur[id] : r.cell;
         const float x = from.x + (to.x - from.x) * alpha, y = from.y + (to.y - from.y) * alpha;
-        DrawCircleV({kMargin + (x + 0.5f) * kCell, kHudH + (y + 0.5f) * kCell}, kCell * 0.34f,
+        DrawCircleV({a.gridX + (x + 0.5f) * kCell, kHudH + (y + 0.5f) * kCell}, kCell * 0.34f,
                     r.carrying ? kCarrying : kToShelf);
         waiting += r.waitTicks > 0;
     }
 
     char hud[160];
-    std::snprintf(hud, sizeof hud, "tick %lld    %.0f deliveries/min    %d waiting    %d robots    %g Hz%s",
-                  a.sim->stats().ticks, deliveriesPerMinute(a), waiting, a.opt.robots, hz(a),
-                  a.paused ? "    paused" : "");
+    std::snprintf(hud, sizeof hud, "tick %lld    %.0f deliveries/min    %d waiting%s", a.sim->stats().ticks,
+                  deliveriesPerMinute(a), waiting, a.paused ? "    paused" : "");
     DrawText(hud, kMargin, 10, 18, kText);
-    DrawText("space pause    +/- speed    up/down robots", kMargin, a.height - kFooterH + 6, 14, kDimText);
+    const char* keys = "keys: space  +/-  up/down  P";
+    DrawText(keys, a.width - kMargin - MeasureText(keys, 14), 13, 14, kDimText);
+
+    const Vector2 mouse = GetMousePosition();
+    for (const Button& b : layoutButtons(a)) {
+        const int tw = MeasureText(b.label.c_str(), 16);
+        const int tx = static_cast<int>(b.rect.x + (b.rect.width - tw) / 2), ty = static_cast<int>(b.rect.y + 6);
+        if (b.action == Action::None) {
+            DrawText(b.label.c_str(), tx, ty, 16, kText);
+            continue;
+        }
+        const bool hover = b.enabled && CheckCollisionPointRec(mouse, b.rect);
+        const Color fill = b.active ? kStation : hover ? kButtonHover : kButton;
+        DrawRectangleRounded(b.rect, 0.3f, 6, fill);
+        DrawText(b.label.c_str(), tx, ty, 16, b.active ? kBg : b.enabled ? kText : kDimText);
+    }
 }
 
 void draw(const App& a) {
@@ -279,7 +414,7 @@ std::string loadMap(const std::string& path) {
 
 [[noreturn]] void usage(int code) {
     std::cout << "usage: viewer [--robots N] [--seed S] [--hz 2|4|8|15|30|60|120] [--map FILE]\n"
-                 "              [--record OUT.gif [--frames N]]\n";
+                 "              [--planner local|stastar] [--record OUT.gif [--frames N]]\n";
     std::exit(code);
 }
 
@@ -299,6 +434,10 @@ Options parseArgs(int argc, char** argv) {
                 auto it = std::find(std::begin(kHzSteps), std::end(kHzSteps), want);
                 if (it == std::end(kHzSteps)) usage(1);
                 o.hzIndex = static_cast<int>(it - std::begin(kHzSteps));
+            } else if (arg == "--planner") {
+                auto p = ww::parsePlanner(next());
+                if (!p) usage(1);
+                o.planner = *p;
             } else if (arg == "--map") o.mapPath = next();
             else if (arg == "--record") o.recordPath = next();
             else if (arg == "--frames") o.recordFrames = std::stoi(next());
@@ -329,9 +468,10 @@ int main(int argc, char** argv) {
     }
 
     const ww::Grid& g = a.sim->grid();
-    a.width = 2 * kMargin + g.width() * kCell;
+    a.width = std::max(kMinWidth, 2 * kMargin + g.width() * kCell);
     a.height = kHudH + g.height() * kCell + kFooterH;
-    a.shelves = shelfBlocks(g);
+    a.gridX = (a.width - g.width() * kCell) / 2;
+    a.shelves = shelfBlocks(g, a.gridX);
 
     SetConfigFlags(FLAG_MSAA_4X_HINT | FLAG_VSYNC_HINT);
     SetTraceLogLevel(LOG_WARNING);

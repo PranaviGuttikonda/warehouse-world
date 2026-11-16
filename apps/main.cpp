@@ -4,6 +4,7 @@
 //   ./warehouse --robots 20 --hz 15     more robots, faster ticks
 //   ./warehouse --map maps/small.txt    custom layout
 //   ./warehouse --headless --ticks 100000   benchmark, no drawing
+//   ./warehouse --planner stastar       space-time A* instead of local moves
 
 #include <chrono>
 #include <csignal>
@@ -28,6 +29,7 @@ struct Options {
     long long ticks = 0;  // 0 = run until Ctrl-C (live mode)
     double hz = 8.0;
     std::uint64_t seed = 42;
+    ww::Planner planner = ww::Planner::Local;
     bool headless = false;
     bool color = true;
     std::string mapPath;
@@ -35,7 +37,7 @@ struct Options {
 
 [[noreturn]] void usage(int code) {
     std::cout << "usage: warehouse [--robots N] [--ticks N] [--hz R] [--seed S]\n"
-                 "                 [--map FILE] [--headless] [--no-color]\n";
+                 "                 [--map FILE] [--planner local|stastar] [--headless] [--no-color]\n";
     std::exit(code);
 }
 
@@ -53,6 +55,11 @@ Options parseArgs(int argc, char** argv) {
             else if (a == "--hz") o.hz = std::stod(next());
             else if (a == "--seed") o.seed = std::stoull(next());
             else if (a == "--map") o.mapPath = next();
+            else if (a == "--planner") {
+                auto p = ww::parsePlanner(next());
+                if (!p) usage(1);
+                o.planner = *p;
+            }
             else if (a == "--headless") o.headless = true;
             else if (a == "--no-color") o.color = false;
             else if (a == "-h" || a == "--help") usage(0);
@@ -83,7 +90,8 @@ int runHeadless(ww::Simulation& sim, long long ticks) {
 
     std::string problem = sim.validate();
     const ww::Stats& s = sim.stats();
-    std::cout << "ticks        " << s.ticks << "\n"
+    std::cout << "planner      " << ww::plannerName(sim.planner()) << "\n"
+              << "ticks        " << s.ticks << "\n"
               << "robots       " << sim.robots().size() << "\n"
               << "deliveries   " << s.deliveries << "\n"
               << "moves        " << s.moves << "\n"
@@ -139,7 +147,7 @@ int main(int argc, char** argv) {
     Options o = parseArgs(argc, argv);
     try {
         ww::Grid grid = ww::Grid::parse(loadMap(o.mapPath));
-        ww::Simulation sim(std::move(grid), {o.robots, o.seed});
+        ww::Simulation sim(std::move(grid), {o.robots, o.seed, o.planner});
         return o.headless ? runHeadless(sim, o.ticks) : runLive(sim, o);
     } catch (const std::exception& e) {
         std::cerr << "error: " << e.what() << "\n";

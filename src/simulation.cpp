@@ -3,10 +3,30 @@
 #include <algorithm>
 #include <stdexcept>
 
+#include "ww/stastar.hpp"
+
 namespace ww {
 
+const char* plannerName(Planner p) {
+    switch (p) {
+        case Planner::Local: return "local";
+        case Planner::SpaceTime: return "stastar";
+    }
+    return "?";
+}
+
+std::optional<Planner> parsePlanner(std::string_view name) {
+    for (Planner p : {Planner::Local, Planner::SpaceTime})
+        if (name == plannerName(p)) return p;
+    return std::nullopt;
+}
+
 Simulation::Simulation(Grid grid, Config config)
-    : grid_(std::move(grid)), rng_(config.seed), dist_(grid_) {
+    : grid_(std::move(grid)),
+      rng_(config.seed),
+      dist_(grid_),
+      planner_(config.planner),
+      reservations_(grid_) {
     occupancy_.assign(static_cast<std::size_t>(grid_.width() * grid_.height()), kNullEntity);
 
     std::vector<Cell> spawns = grid_.floorCells();
@@ -21,11 +41,19 @@ Simulation::Simulation(Grid grid, Config config)
         reg_.add(e, Robot{i});
         reg_.add(e, makeTask(grid_, rng_));
         occupancy_[grid_.index(spawns[i])] = e;
+        if (planner_ == Planner::SpaceTime) {
+            // Park on the spawn cell; the first step replans (goal unset).
+            Plan& plan = reg_.add(e, Plan{{spawns[i]}, 0});
+            reservations_.reservePath(e, plan.path, plan.start);
+        }
     }
 }
 
 void Simulation::step() {
-    movementSystem(reg_, grid_, dist_, occupancy_, rng_, stats_);
+    if (planner_ == Planner::Local)
+        movementSystem(reg_, grid_, dist_, occupancy_, rng_, stats_);
+    else
+        spaceTimeSystem(reg_, grid_, dist_, reservations_, occupancy_, stats_);
     taskSystem(reg_, grid_, rng_, stats_);
     ++stats_.ticks;
 }
