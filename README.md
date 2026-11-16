@@ -47,7 +47,7 @@ cmake -S . -B build -DWW_VIEWER=ON
 cmake --build build -j
 ./build/viewer                           # purple = to shelf, coral = carrying
 ./build/viewer --robots 40 --hz 15 --seed 3 --planner cbs
-./build/viewer --robots 24 --planner stastar --record docs/viewer.gif  # the GIF above
+./build/viewer --robots 40 --planner cbs --record docs/viewer.gif --frames 180  # the GIF above
 ```
 
 The bottom bar has buttons for everything, so the browser build works
@@ -186,6 +186,10 @@ A* gridlocked (1, 3, 4: 3,212 / 4,533 / 2,661 deliveries) now deliver
 23,640 / 23,563 / 23,474. Cost: about 0.23 ms per tick at 40 robots; 4–10
 of the ~18,600 solves per run hit the node budget and used the fallback.
 
+This is a windowed (rolling-horizon), greedy (bounded-suboptimal) variant
+of CBS, not optimal CBS: it resolves conflicts only a few ticks ahead and
+prefers plans with fewer conflicts over cheaper ones.
+
 How it works (`cbs.hpp`):
 
 - **Windowed.** Robots get new tasks all the time, so CBS plans everyone
@@ -217,8 +221,10 @@ See [docs/VISION.md](docs/VISION.md).
 - [x] Graphical viewer: raylib, desktop and WebAssembly
 - [x] A*
 - [x] Space-time A* with planner buttons
-- [ ] Conflict-based search (CBS)
+- [x] Conflict-based search (CBS)
 - [ ] Café theme + map editor
 - [ ] One-way aisles
 - [ ] Challenge levels
 - [ ] Web deploy
+- [ ] Later: smarter task assignment (which robot takes which order)
+- [ ] Stretch: authoritative server streaming state over TCP
