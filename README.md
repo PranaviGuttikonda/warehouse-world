@@ -29,7 +29,11 @@ cmake --build build -j
 ./build/warehouse --robots 20 --hz 15
 ./build/warehouse --map maps/small.txt --robots 6
 ./build/warehouse --headless --robots 16 --ticks 200000   # benchmark
+./build/warehouse --planner stastar --robots 28           # space-time A*
 ```
+
+`--planner` picks how robots move: `local` (phase 1, the default) or
+`stastar` (space-time A* with reservations, see below).
 
 ### Graphical viewer
 
@@ -40,14 +44,18 @@ hash) on the first run.
 cmake -S . -B build -DWW_VIEWER=ON
 cmake --build build -j
 ./build/viewer                           # purple = to shelf, coral = carrying
-./build/viewer --robots 24 --hz 15 --seed 3
-./build/viewer --record docs/viewer.gif  # re-record the GIF above
+./build/viewer --robots 24 --hz 15 --seed 3 --planner stastar
+./build/viewer --robots 24 --planner stastar --record docs/viewer.gif  # the GIF above
 ```
 
-Keys: <kbd>space</kbd> pause, <kbd>+</kbd>/<kbd>-</kbd> speed,
-<kbd>↑</kbd>/<kbd>↓</kbd> robot count (restarts the run with the same seed).
-The HUD shows the tick, deliveries per minute at the current speed (over
-the last 10 s) and how many robots are blocked. On Linux, raylib also needs
+The bottom bar has buttons for everything, so the browser build works
+without a keyboard: pause, speed −/+, robot count −/+, and one button per
+planner (the active one is highlighted). Changing the planner or robot count
+restarts the run with the same seed, so comparisons are fair. Keys do the
+same: <kbd>space</kbd> pause, <kbd>+</kbd>/<kbd>-</kbd> speed,
+<kbd>↑</kbd>/<kbd>↓</kbd> robots, <kbd>P</kbd> next planner. The HUD shows
+the tick, deliveries per minute at the current speed (over the last 10 s)
+and how many robots are blocked. On Linux, raylib also needs
 the X11 and OpenGL development packages.
 
 ### In the browser (WebAssembly)
@@ -72,8 +80,10 @@ host can serve them.
 | ECS | `ecs.hpp` | Sparse-set component pools; dense arrays, O(1) add/remove |
 | Random | `random.hpp` | Portable Fisher–Yates shuffle and uniform ints on `mt19937_64` |
 | Fixed timestep | `timestep.hpp` | Accumulator loop: sim ticks at a constant rate, independent of frame rate, with a catch-up cap |
-| Movement | `systems.cpp` | One cell per tick along a cached BFS distance field; reservation rule prevents overlaps and head-on swaps |
+| Local movement | `systems.cpp` | `--planner local`: one cell per tick along a cached BFS distance field; reservation rule prevents overlaps and head-on swaps |
 | A* | `astar.hpp` | Single-robot shortest path (Manhattan heuristic, deterministic ties); the base for space-time planning |
+| Reservations | `reservation.hpp` | Who holds which cell at which tick, plus "parked from tick t on"; swap checks fall out of the vertex entries |
+| Space-time A* | `stastar.hpp` | `--planner stastar`: A* over (cell, tick) against the reservation table; replans on a new goal |
 | Tasks | `systems.cpp` | Shelf face → station → new task; counts deliveries |
 | Viewer | `apps/viewer.cpp` | raylib window or WebAssembly page; robots move smoothly between cells using `FixedTimestep::alpha()` |
 | Simulation | `simulation.hpp` | Owns the world, runs systems in order, validates invariants |
@@ -100,9 +110,65 @@ Earlier versions of this table used `std::shuffle` and
 `std::uniform_int_distribution`, which differ between standard libraries;
 the RNG is now portable (`random.hpp`), so these numbers reproduce anywhere.
 
+## Phase 2: space-time A*
+
+Deliveries in 20,000 ticks on the default map, over seeds 1–5
+(`scripts/bench.sh --planner local` and `--planner stastar`):
+
+| Robots | 4 | 8 | 12 | 16 | 20 | 24 | 28 | 32 | 40 |
+|---|---|---|---|---|---|---|---|---|---|
+| Local, mean | 1872 | 3624 | 4029 | 4545 | 4037 | 3638 | 1973 | 1283 | 985 |
+| Local, min-max | 846-2223 | 3592-3683 | 3818-4390 | 4349-4645 | 3011-4561 | 1920-4289 | 310-3750 | 146-2475 | 631-1872 |
+| **Space-time A\*, mean** | **2562** | **5041** | **7372** | **9536** | **11491** | **13196** | **14612** | **14726** | **8816** |
+| Space-time A\*, min-max | 2552-2568 | 5022-5069 | 7348-7389 | 9483-9562 | 11469-11533 | 13125-13242 | 14544-14688 | 10711-15803 | 2661-16891 |
+| Ratio of means | 1.4× | 1.4× | 1.8× | 2.1× | 2.8× | 3.6× | 7.4× | 11.5× | 9.0× |
+
+Space-time A* beats local at every robot count, and throughput keeps
+climbing up to 28–32 robots instead of collapsing after 16. It is also far
+less sensitive to the seed: up to 28 robots the five runs land within about 1% of
+each other. At 32 robots one seed falls to 10,711. At 40 robots three of
+five seeds still gridlock (2,661–4,533 deliveries) while the other two reach
+about 16,800. It costs more CPU: about 0.8 ms per tick at 16 robots,
+against microseconds for local, which is still fine for the live view.
+
+How it works (`stastar.hpp`):
+
+- **Plan in space and time.** Each robot searches over (cell, tick) with
+  wait plus 4 moves, skipping cells another robot holds at that tick and
+  head-on swaps. The heuristic is the exact BFS distance, so it never
+  overestimates. Robots plan one at a time, in a rotating order, against
+  everyone else's reservations.
+- **Always safe.** Every plan ends with the robot parked on a cell it can
+  keep forever, and nobody may plan through a parked cell. A robot whose
+  planning fails stays where it is, which its previous plan already made
+  safe. The tests check thousands of ticks with no shared cell or swap.
+- **Touch and go.** A plan visits its goal and then continues to a cell
+  that is nobody's goal. Goals are only ever held for single ticks, so
+  many robots can line up for the same station. In an earlier version
+  robots parked on their goal: the next robot couldn't even plan towards
+  a station until the previous one left, and at 16 robots it made 225
+  deliveries in the first 1,200 ticks to local's 303 (seed 1).
+- **Keep station approaches clear.** No robot parks within 2 cells of a
+  station. A corner station has only two access cells, and robots stepping
+  off it onto them sealed it; at 28 robots (seed 1) every robot ended up
+  queued behind one corner by tick 4,600: 2,491 deliveries, against 14,587
+  with the clearance. A robot stuck
+  inside that zone, or on another robot's goal, moves out of the way
+  instead of waiting.
+
+**Limits.** Robots plan one after another and can't ask each other to
+move, so at high density they can still box each other in (40 robots
+fill a fifth of the floor). Of the variations tried, a wider station
+clearance (3) and letting every stuck robot step aside were both worse.
+Conflict-based search (CBS), which plans robots jointly, is the next step.
+
 ## Roadmap
 
 - [x] **Phase 1, core engine:** grid, ECS, fixed timestep, collision-free local movement, terminal view, tests
 - [x] **Graphical viewer:** raylib, desktop and WebAssembly
-- [ ] **Phase 2, warehouse brain:** A*, space-time A* with reservations, conflict-based search (CBS), smarter task assignment; beat the baseline above
+- [ ] **Phase 2, warehouse brain:** beat the baseline above
+  - [x] A*
+  - [x] Space-time A* with a reservation table
+  - [ ] Conflict-based search (CBS)
+  - [ ] Smarter task assignment
 - [ ] **Phase 3, authoritative server:** sim runs as a server, streams state over TCP at a fixed tick rate; viewer and order-injection clients

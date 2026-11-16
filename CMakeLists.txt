@@ -14,6 +14,8 @@ add_library(ww_core
   src/grid.cpp
   src/systems.cpp
   src/astar.cpp
+  src/reservation.cpp
+  src/stastar.cpp
   src/simulation.cpp
   src/render.cpp
 )
@@ -64,6 +66,7 @@ add_executable(ww_tests
   tests/test_simulation.cpp
   tests/test_random.cpp
   tests/test_astar.cpp
+  tests/test_stastar.cpp
 )
 target_link_libraries(ww_tests PRIVATE ww_core)
 target_include_directories(ww_tests PRIVATE tests)
