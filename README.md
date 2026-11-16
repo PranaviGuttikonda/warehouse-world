@@ -73,6 +73,7 @@ host can serve them.
 | Random | `random.hpp` | Portable Fisher–Yates shuffle and uniform ints on `mt19937_64` |
 | Fixed timestep | `timestep.hpp` | Accumulator loop: sim ticks at a constant rate, independent of frame rate, with a catch-up cap |
 | Movement | `systems.cpp` | One cell per tick along a cached BFS distance field; reservation rule prevents overlaps and head-on swaps |
+| A* | `astar.hpp` | Single-robot shortest path (Manhattan heuristic, deterministic ties); the base for space-time planning |
 | Tasks | `systems.cpp` | Shelf face → station → new task; counts deliveries |
 | Viewer | `apps/viewer.cpp` | raylib window or WebAssembly page; robots move smoothly between cells using `FixedTimestep::alpha()` |
 | Simulation | `simulation.hpp` | Owns the world, runs systems in order, validates invariants |
