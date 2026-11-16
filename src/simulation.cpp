@@ -13,7 +13,7 @@ Simulation::Simulation(Grid grid, Config config)
     if (config.robots < 0 || config.robots > static_cast<int>(spawns.size()))
         throw std::invalid_argument("robot count must be between 0 and " +
                                     std::to_string(spawns.size()));
-    std::shuffle(spawns.begin(), spawns.end(), rng_);
+    ww::shuffle(spawns.begin(), spawns.end(), rng_);
 
     for (int i = 0; i < config.robots; ++i) {
         Entity e = reg_.create();
