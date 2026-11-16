@@ -30,6 +30,7 @@ add_executable(ww_tests
   tests/test_ecs.cpp
   tests/test_timestep.cpp
   tests/test_simulation.cpp
+  tests/test_random.cpp
 )
 target_link_libraries(ww_tests PRIVATE ww_core)
 target_include_directories(ww_tests PRIVATE tests)

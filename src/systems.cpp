@@ -31,9 +31,9 @@ const std::vector<int>& DistanceCache::to(Cell goal) {
 Task makeTask(const Grid& grid, Rng& rng) {
     const auto& faces = grid.pickFaces();
     const auto& stations = grid.stations();
-    std::uniform_int_distribution<std::size_t> pickFace(0, faces.size() - 1);
-    std::uniform_int_distribution<std::size_t> pickStation(0, stations.size() - 1);
-    return Task{faces[pickFace(rng)], stations[pickStation(rng)], Task::Stage::ToPickup};
+    const Cell face = faces[uniformInt(rng, 0, faces.size() - 1)];
+    const Cell station = stations[uniformInt(rng, 0, stations.size() - 1)];
+    return Task{face, station, Task::Stage::ToPickup};
 }
 
 void taskSystem(Registry& reg, const Grid& grid, Rng& rng, Stats& stats) {
@@ -84,7 +84,7 @@ void movementSystem(Registry& reg, const Grid& grid, DistanceCache& dist,
         std::array<Cell, 4> options{};
         for (int i = 0; i < 4; ++i)
             options[i] = {here.x + kNeighbors[i].x, here.y + kNeighbors[i].y};
-        std::shuffle(options.begin(), options.end(), rng);  // random tie-break
+        ww::shuffle(options.begin(), options.end(), rng);  // random tie-break
 
         Cell chosen = here;
         for (Cell c : options) {
