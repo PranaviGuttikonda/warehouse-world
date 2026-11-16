@@ -20,32 +20,36 @@ between planners is easy to see.
 
 ## Look and feel
 
-Minimal and dark: flat shapes, thin outlines (1.5–2 px), no shadows or
-gradients, and one accent colour that only ever means food.
+Cozy café, toned down: warm and light, but not loud. Soft brown outlines,
+small shapes with room around them, no shadows or gradients.
 
-![The café in the viewer: robots as small squares, tables with amber order dots, the kitchen counter along the top wall](cafe.png)
+![The café in the viewer: robot waiters, tables with order bubbles, the kitchen counter, the legend and controls](cafe.png)
 
 | Element | Look |
 |---|---|
-| Background / floor / walls | `#16181D` / flat `#1C1F26` / `#2A2E37` |
-| Kitchen counter | a flat band `#2F333D`, pickup mats `#262A32` |
-| Tables | `#1C1F26` with a thin `#3A3F4A` outline |
-| Plants | small flat `#334036` circles |
-| Robots, main text | off-white `#E6E2DA`; secondary text `#8A8F98`; paths `#5A606B` |
-| Accent | amber `#E6A15A`, for food and orders only |
+| Lines | soft brown `#5A4636`, ~1.5 px (2 px for the floor frame) |
+| Page / floor | `#FBF4E9` / a very faint checker `#FAF2E6` and `#F4E8D6` |
+| Kitchen counter | muted coral `#D27A68` with "Kitchen" in white; pickup mats `#EBCB82` |
+| Tables | white, thin outline, faint dashed rim `#E9C7C0`, ~60% of a cell |
+| Plants | leaves `#8FC08A` / `#9CCB96`, pots `#C98B63`, ~55% of a cell |
+| Robots | dusty blue `#8CC4E0`, ~50% of a cell |
+| Food and badges | coral `#D27A68`; cups `#9A6B4F`; star and served badge `#F6DFA0` |
 
-- **Robots** are small rounded squares (about 60% of a cell), so they never
-  look like the round tables: a hollow off-white outline on the way to the
-  kitchen, filled amber while carrying. Two tiny eyes look the way the robot
-  is moving.
-- **Orders:** a small amber dot in the centre of a table, with a count beside
-  it if there's more than one. On delivery the dot fades and a small grey
-  "+1" drifts up.
-- **Paths** are hidden; hover or click a robot to see its planned path as a
-  faint dotted line, or press T for all of them.
-- **HUD:** one line of small text, e.g. "142 served · 38/min · 2 stuck".
-  Controls are quiet text buttons; the active planner is off-white with a
-  thin amber underline.
+- **Robot waiters:** rounded squares with two eyes (white, small brown
+  pupils that look the way they're going), a small smile and a short
+  antenna with a `#EBCB82` tip. Carrying: a white plate with a coral dish on
+  top, about the robot's width, and no antenna.
+- **Orders:** a small white speech bubble with a brown cup above a table
+  with a waiting order, and a small coral number badge for more than one.
+- **Flow:** every carrying robot has a faint dotted brown line to its table.
+  Hover or click a robot, or press T, for full planned paths.
+- **Delivery:** the bubble pops away and a small "+1" floats up.
+- **Legend:** one line under the floor with a tiny drawn icon for robot
+  waiter, carrying an order, order waiting, pickup spot and plant.
+- **HUD:** a "Lunch rush" panel (thin coral progress bar and time) on the
+  left, a pale yellow "★ N served" badge on the right. Along the bottom,
+  small pills (pause, speed, "N stuck", "N robots") and planner buttons with
+  a 1.8 px outline and a thicker bottom edge; the active one is filled blue.
 - Font: IBM Plex Sans (SIL Open Font License), committed in `assets/fonts/`.
 
 ## Game loop

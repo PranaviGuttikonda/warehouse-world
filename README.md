@@ -1,6 +1,6 @@
 # warehouse-world
 
-![Robots carrying orders (amber) from the kitchen counter to café tables](docs/viewer.gif)
+![Robot waiters carrying orders from the kitchen counter to café tables](docs/viewer.gif)
 
 A multi-agent path finding sim: robots pick items up and deliver them
 without colliding, using one of three planners (local rules, space-time
@@ -53,26 +53,29 @@ cmake --build build -j
 ./build/viewer                           # the café, 16 robots
 ./build/viewer --robots 32 --hz 15 --seed 3 --planner cbs
 ./build/viewer --map warehouse           # the benchmark map, same theme
-./build/viewer --robots 24 --planner cbs --record docs/viewer.gif --frames 230  # the GIF above
+./build/viewer --robots 24 --planner cbs --record docs/viewer.gif --frames 125 --fps 15  # the GIF above
 ```
 
-How to read it:
-- A hollow square is a robot heading to the kitchen; a filled amber one is
-  carrying an order. The two dots are its eyes, facing the way it's going.
-- An amber dot on a table is an order waiting there (with a count if there
-  are several). When it's delivered, the dot fades and a "+1" drifts up.
-- Hover or click a robot to see its planned path; <kbd>T</kbd> shows every
-  robot's path.
+How to read it (the legend under the floor says the same):
+- A blue robot with an antenna is heading to the kitchen; one with a plate
+  on top is carrying an order, and a faint dotted line leads to its table.
+- A speech bubble with a cup over a table is an order waiting there; a coral
+  badge counts several. When it's delivered, the bubble pops and a "+1"
+  floats up.
+- Yellow mats under the counter are the pickup spots; plants are obstacles.
+- Hover or click a robot to see its full planned path; <kbd>T</kbd> shows
+  every robot's path.
 
-The bottom bar has buttons for everything, so the browser build works
-without a keyboard: pause, speed −/+, robot count −/+, and one button per
-planner (the active one is highlighted). Changing the planner or robot count
+Everything is clickable, so the browser build works without a keyboard:
+pills for pause, speed −/+ and robot count −/+ along the bottom, and one
+button per planner (the active one is filled blue). Changing the planner or robot count
 restarts the run with the same seed, so comparisons are fair. Keys do the
 same: <kbd>space</kbd> pause, <kbd>+</kbd>/<kbd>-</kbd> speed,
 <kbd>↑</kbd>/<kbd>↓</kbd> robots, <kbd>P</kbd> next planner, <kbd>T</kbd>
-all paths. The HUD line reads "served · per minute · stuck": orders
-served, orders per minute at the current speed (over the last 10 s) and
-robots blocked 3+ ticks in a row. On Linux, raylib also needs
+all paths. The top shows a "Lunch rush" timer (it loops for now;
+the game loop comes later), orders served, and orders per minute at the
+current speed (over the last 10 s); the "stuck" pill counts robots blocked
+3+ ticks in a row. On Linux, raylib also needs
 the X11 and OpenGL development packages. The UI font is IBM Plex Sans
 (SIL Open Font License, `assets/fonts/OFL.txt`), embedded at build time.
 
@@ -104,7 +107,7 @@ host can serve them.
 | Space-time A* | `stastar.hpp` | `--planner stastar`: A* over (cell, tick) against the reservation table; replans on a new goal |
 | CBS | `cbs.hpp` | `--planner cbs`: windowed conflict-based search, all robots planned jointly; replans on any new goal |
 | Tasks | `systems.cpp` | Shelf face → station → new task; counts deliveries |
-| Viewer | `apps/viewer.cpp` | Rush Hour Café in a raylib window or WebAssembly page (minimal dark style, IBM Plex Sans embedded at build time); robots move smoothly between cells using `FixedTimestep::alpha()` |
+| Viewer | `apps/viewer.cpp` | Rush Hour Café in a raylib window or WebAssembly page (IBM Plex Sans embedded at build time); robots move smoothly between cells using `FixedTimestep::alpha()` |
 | Simulation | `simulation.hpp` | Owns the world, runs systems in order, validates invariants |
 
 Same seed, same run: the simulation is fully deterministic, on every

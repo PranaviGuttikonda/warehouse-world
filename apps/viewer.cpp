@@ -6,8 +6,8 @@
 //   ./viewer --record docs/viewer.gif     write a short GIF and exit
 //
 // Keys: space pause, +/- speed, up/down robot count, P cycle planner,
-// T show all paths. Every control is also a button in the bottom bar
-// (mouse or touch); hover or click a robot to see its planned path.
+// T show all planned paths. Every control is also clickable (mouse or
+// touch); hover or click a robot to see its planned path.
 
 #include <algorithm>
 #include <cmath>
@@ -38,28 +38,35 @@ using ww::Cell;
 
 constexpr int kCell = 32;
 constexpr int kMargin = 16;
-constexpr int kHudH = 32;
-constexpr int kFooterH = 40;
+constexpr int kHudH = 46;      // lunch-rush panel and served badge
+constexpr int kLegendH = 26;   // legend row under the floor
+constexpr int kFooterH = 42;   // pills and planner buttons
 constexpr int kMinWidth = 720;  // room for the control bar on small maps
 constexpr double kHzSteps[] = {2, 4, 8, 15, 30, 60, 120};
-constexpr double kRateWindow = 10.0;  // seconds of running time for orders/min
-constexpr double kPopSeconds = 0.8;   // delivery fade
-constexpr int kStuckTicks = 3;        // a robot counts as stuck after this many blocked ticks
+constexpr double kRateWindow = 10.0;   // seconds of running time for orders/min
+constexpr double kPopSeconds = 0.8;    // delivery: bubble pops, "+1" floats up
+constexpr double kRushSeconds = 120.0;  // lunch-rush timer; loops until the game loop exists
+constexpr int kStuckTicks = 3;          // a robot counts as stuck after this many blocked ticks
 
-// Minimal dark palette (docs/VISION.md). Amber is the only accent, and it
-// only ever means food: an order waiting, or a robot carrying one.
-const Color kBg{22, 24, 29, 255};          // #16181D
-const Color kFloor{28, 31, 38, 255};       // #1C1F26
-const Color kWall{42, 46, 55, 255};        // #2A2E37
-const Color kCounter{47, 51, 61, 255};     // #2F333D
-const Color kMat{38, 42, 50, 255};         // #262A32
-const Color kTableEdge{58, 63, 74, 255};   // #3A3F4A
-const Color kPlant{51, 64, 54, 255};       // #334036
-const Color kInk{230, 226, 218, 255};      // #E6E2DA robots, main text
-const Color kMuted{138, 143, 152, 255};    // #8A8F98 secondary text
-const Color kFaint{90, 96, 107, 255};      // #5A606B paths
-const Color kDisabled{74, 79, 89, 255};
-const Color kAmber{230, 161, 90, 255};     // #E6A15A food and orders
+// Cozy, toned-down café palette (docs/VISION.md). No shadows, no gradients.
+const Color kLine{90, 70, 54, 255};          // #5A4636 soft brown outlines and text
+const Color kLineSoft{154, 133, 116, 255};   // secondary text
+const Color kPage{251, 244, 233, 255};       // #FBF4E9
+const Color kFloorA{250, 242, 230, 255};     // #FAF2E6
+const Color kFloorB{244, 232, 214, 255};     // #F4E8D6
+const Color kCounter{210, 122, 104, 255};    // #D27A68
+const Color kMat{235, 203, 130, 255};        // #EBCB82
+const Color kWhite{255, 255, 255, 255};
+const Color kRim{233, 199, 192, 255};        // #E9C7C0
+const Color kLeafA{143, 192, 138, 255};      // #8FC08A
+const Color kLeafB{156, 203, 150, 255};      // #9CCB96
+const Color kPot{201, 139, 99, 255};         // #C98B63
+const Color kRobot{140, 196, 224, 255};      // #8CC4E0
+const Color kFood{210, 122, 104, 255};       // #D27A68
+const Color kCup{154, 107, 79, 255};         // #9A6B4F
+const Color kBadge{246, 223, 160, 255};      // #F6DFA0
+constexpr float kEdge = 1.5f;   // outline width
+constexpr float kFrame = 2.0f;  // floor frame width
 
 // Planner buttons, in P-key cycling order.
 struct PlannerChoice {
@@ -77,11 +84,10 @@ Font gFont{};
 
 // Given: an open window. Approach: rasterise the embedded TTF once at a size
 // big enough for the 2x GIF render, with bilinear filtering for the smaller
-// sizes we draw. ASCII plus the middle dot used in the HUD.
+// sizes we draw. ASCII is all the UI needs.
 void loadUiFont() {
     std::vector<int> codepoints;
     for (int c = 32; c < 127; ++c) codepoints.push_back(c);
-    codepoints.push_back(0x00B7);  // ·
     gFont = LoadFontFromMemory(".ttf", kUiFontData, static_cast<int>(sizeof(kUiFontData)), 32, codepoints.data(),
                                static_cast<int>(codepoints.size()));
     SetTextureFilter(gFont.texture, TEXTURE_FILTER_BILINEAR);
@@ -92,6 +98,11 @@ void text(const std::string& s, float x, float y, float size, Color c) {
 }
 
 float measure(const std::string& s, float size) { return MeasureTextEx(gFont, s.c_str(), size, 0).x; }
+
+Color withAlpha(Color c, float a) {
+    c.a = static_cast<unsigned char>(255 * std::clamp(a, 0.0f, 1.0f));
+    return c;
+}
 
 struct Options {
     int robots = 16;
@@ -120,13 +131,14 @@ struct App {
     std::vector<std::pair<Cell, double>> pops;  // delivered-at drop-off cell, runTime
     int width = 0, height = 0;
     int gridX = kMargin;  // left edge of the grid (centred when the window is wider)
+    int gridH = 0;        // grid height in pixels
     int prevTouches = 0;
 };
 
 double hz(const App& a) { return kHzSteps[a.opt.hzIndex]; }
 
 // Given: the grid. Approach: flood-fill each counter block and keep its
-// bounding box, so a block draws as one band instead of separate cells.
+// bounding box, so a block draws as one counter instead of separate cells.
 std::vector<Rectangle> shelfBlocks(const ww::Grid& g, int originX) {
     std::vector<Rectangle> out;
     std::vector<bool> seen(static_cast<std::size_t>(g.width() * g.height()), false);
@@ -148,7 +160,7 @@ std::vector<Rectangle> shelfBlocks(const ww::Grid& g, int originX) {
                 stack.push_back(n);
             }
         }
-        const float inset = 3.0f;
+        const float inset = 4.0f;
         out.push_back({originX + x0 * kCell + inset, kHudH + y0 * kCell + inset,
                        (x1 - x0 + 1) * kCell - 2 * inset, (y1 - y0 + 1) * kCell - 2 * inset});
     }
@@ -177,6 +189,8 @@ void restart(App& a) {
 
 enum class Action { None, Pause, Slower, Faster, FewerRobots, MoreRobots, Planner };
 
+// A clickable (or label-only, Action::None) item. Items sharing a group
+// sit inside one pill; planner buttons have group -1 and draw as keys.
 struct Button {
     Rectangle rect;
     std::string label;
@@ -184,46 +198,62 @@ struct Button {
     int planner = -1;     // index into kPlanners for Action::Planner
     bool active = false;  // current planner
     bool enabled = true;
+    int group = -1;
 };
 
-constexpr float kButtonText = 14;
+constexpr float kButtonText = 13;
 
 int maxRobots(const App& a) { return static_cast<int>(a.sim->grid().floorCells().size()); }
 
+int stuckCount(const App& a) {
+    int n = 0;
+    for (const ww::RobotView& r : a.sim->robots()) n += r.waitTicks >= kStuckTicks;
+    return n;
+}
+
 // Given: app state. Approach: one layout used for both drawing and hit
-// testing, so what you see is what you click. Value labels are buttons
-// with Action::None. Hit boxes stay 28 px tall even though the text is small.
+// testing, so what you see is what you click. Left: pills for pause,
+// speed, stuck count and robot count; right: planner buttons.
 std::vector<Button> layoutButtons(const App& a) {
     std::vector<Button> out;
-    const float y = static_cast<float>(a.height - kFooterH + 6), h = 28;
-    float x = kMargin - 6;
-    auto add = [&](std::string label, Action act, bool enabled = true) {
-        const float w = measure(label, kButtonText) + 14;
-        out.push_back({{x, y, w, h}, std::move(label), act, -1, false, enabled});
+    const float y = static_cast<float>(a.height - kFooterH + 8), h = 26;
+    float x = kMargin;
+    int group = 0;
+    auto add = [&](std::string label, Action act, bool enabled = true, float pad = 10) {
+        const float w = measure(label, kButtonText) + 2 * pad;
+        out.push_back({{x, y, w, h}, std::move(label), act, -1, false, enabled, group});
         x += w;
+    };
+    auto nextPill = [&] {
+        ++group;
+        x += 8;
     };
     const int last = static_cast<int>(std::size(kHzSteps)) - 1;
     char value[32];
 
-    add(a.paused ? "Play" : "Pause", Action::Pause);
-    x += 14;
-    add("-", Action::Slower, a.opt.hzIndex > 0);
+    add(a.paused ? "Play" : "Pause", Action::Pause, true, 12);
+    nextPill();
+    add("-", Action::Slower, a.opt.hzIndex > 0, 9);
     std::snprintf(value, sizeof value, "%g Hz", hz(a));
-    add(value, Action::None);
-    add("+", Action::Faster, a.opt.hzIndex < last);
-    x += 14;
-    add("-", Action::FewerRobots, a.opt.robots > 1);
+    add(value, Action::None, true, 2);
+    add("+", Action::Faster, a.opt.hzIndex < last, 9);
+    nextPill();
+    std::snprintf(value, sizeof value, "%d stuck", stuckCount(a));
+    add(value, Action::None, true, 12);
+    nextPill();
+    add("-", Action::FewerRobots, a.opt.robots > 1, 9);
     std::snprintf(value, sizeof value, "%d robots", a.opt.robots);
-    add(value, Action::None);
-    add("+", Action::MoreRobots, a.opt.robots < maxRobots(a));
+    add(value, Action::None, true, 2);
+    add("+", Action::MoreRobots, a.opt.robots < maxRobots(a), 9);
 
     // Planner buttons, right-aligned.
-    x = static_cast<float>(a.width - kMargin + 6);
+    x = static_cast<float>(a.width - kMargin);
     for (int i = static_cast<int>(std::size(kPlanners)) - 1; i >= 0; --i) {
-        const float w = measure(kPlanners[i].label, kButtonText) + 14;
+        const float w = measure(kPlanners[i].label, kButtonText) + 22;
         x -= w;
         out.push_back({{x, y, w, h}, kPlanners[i].label, Action::Planner, i,
-                       kPlanners[i].planner == a.opt.planner, true});
+                       kPlanners[i].planner == a.opt.planner, true, -1});
+        x -= 6;
     }
     return out;
 }
@@ -336,7 +366,7 @@ void handleInput(App& a) {
 
 // Given: frame time. Approach: run fixed ticks; before each, keep the old
 // positions so drawing can lerp prev -> cur by FixedTimestep::alpha(), note
-// which way each robot moved, and catch deliveries for the fade.
+// which way each robot moved, and catch deliveries for the pop.
 void update(App& a, double frameSeconds) {
     if (a.paused) return;
     a.runTime += frameSeconds;
@@ -374,135 +404,274 @@ Cell tableOf(const ww::Grid& g, Cell dropoff) {
     return dropoff;
 }
 
-Color withAlpha(Color c, float a) {
-    c.a = static_cast<unsigned char>(255 * std::clamp(a, 0.0f, 1.0f));
-    return c;
+// --- Drawing. Every shape takes its size, so the legend reuses them small.
+
+void outlinedCircle(Vector2 c, float r, Color fill, float edge = kEdge) {
+    DrawCircleV(c, r + edge, kLine);
+    DrawCircleV(c, r, fill);
 }
 
-// Faint dots every few pixels along a polyline.
-void drawDottedPath(const std::vector<Vector2>& pts) {
-    constexpr float kGap = 6.0f;
+void outlinedRect(Rectangle r, float radius, Color fill, float edge = kEdge) {
+    const Rectangle o{r.x - edge, r.y - edge, r.width + 2 * edge, r.height + 2 * edge};
+    DrawRectangleRounded(o, (radius + edge) * 2 / std::min(o.width, o.height), 8, kLine);
+    DrawRectangleRounded(r, radius * 2 / std::min(r.width, r.height), 8, fill);
+}
+
+void drawPlant(Vector2 c, float size) {  // size: overall width (~55% of a cell)
+    const float s = size;
+    outlinedRect({c.x - s * 0.24f, c.y + s * 0.08f, s * 0.48f, s * 0.36f}, s * 0.08f, kPot, 1.2f);
+    const Vector2 leaves[3] = {{c.x - s * 0.2f, c.y - s * 0.08f}, {c.x + s * 0.2f, c.y - s * 0.08f},
+                               {c.x, c.y - s * 0.26f}};
+    for (Vector2 l : leaves) DrawCircleV(l, s * 0.2f + 1.2f, kLine);
+    DrawCircleV(leaves[0], s * 0.2f, kLeafA);
+    DrawCircleV(leaves[1], s * 0.2f, kLeafB);
+    DrawCircleV(leaves[2], s * 0.2f, kLeafA);
+}
+
+void drawTable(Vector2 c) {
+    const float r = kCell * 0.3f;  // ~60% of a cell across
+    outlinedCircle(c, r, kWhite);
+    for (int i = 0; i < 12; ++i) {  // faint dashed rim
+        const float a0 = i * 30.0f;
+        DrawRing(c, r * 0.72f, r * 0.72f + 1.0f, a0, a0 + 16.0f, 4, kRim);
+    }
+}
+
+void drawMat(Vector2 c, float size) {
+    DrawRectangleRounded({c.x - size / 2, c.y - size / 2, size, size}, 0.3f, 6, kMat);
+}
+
+// White plate with a coral dish on it, about `w` wide.
+void drawPlate(Vector2 c, float w) {
+    DrawEllipse(static_cast<int>(c.x), static_cast<int>(c.y), w / 2 + 1.2f, w * 0.17f + 1.2f, kLine);
+    DrawEllipse(static_cast<int>(c.x), static_cast<int>(c.y), w / 2, w * 0.17f, kWhite);
+    DrawCircleSector({c.x, c.y - 0.5f}, w * 0.26f + 1.0f, 180, 360, 12, kLine);
+    DrawCircleSector({c.x, c.y - 0.5f}, w * 0.26f, 180, 360, 12, kFood);
+}
+
+void drawCup(Vector2 c, float h) {  // small brown cup, h tall
+    DrawRing({c.x + h * 0.42f, c.y}, h * 0.16f, h * 0.28f, 0, 360, 12, kCup);  // handle
+    DrawRectangleRounded({c.x - h * 0.4f, c.y - h * 0.45f, h * 0.8f, h * 0.9f}, 0.35f, 6, kCup);
+}
+
+// Small speech bubble with a cup, ~55% of a cell wide; `scale` < 1 while popping.
+void drawBubble(Vector2 table, float scale, float alpha, int orders) {
+    const float w = kCell * 0.55f * scale, h = kCell * 0.42f * scale;
+    const Vector2 c{table.x, table.y - kCell * 0.62f};
+    const Rectangle r{c.x - w / 2, c.y - h / 2, w, h};
+    const Color line = withAlpha(kLine, alpha), fill = withAlpha(kWhite, alpha);
+    DrawTriangle({c.x - 3.5f * scale, r.y + h - 0.5f}, {c.x, r.y + h + 4.5f * scale}, {c.x + 3.5f * scale, r.y + h - 0.5f},
+                 line);
+    DrawRectangleRounded({r.x - kEdge, r.y - kEdge, w + 2 * kEdge, h + 2 * kEdge}, 0.6f, 8, line);
+    DrawRectangleRounded(r, 0.6f, 8, fill);
+    DrawTriangle({c.x - 2.2f * scale, r.y + h - 1}, {c.x, r.y + h + 2.6f * scale}, {c.x + 2.2f * scale, r.y + h - 1},
+                 fill);
+    if (alpha >= 1.0f) drawCup({c.x - h * 0.08f, c.y + 0.5f}, h * 0.5f);
+    if (orders > 1 && alpha >= 1.0f) {
+        const Vector2 b{r.x + w, r.y};
+        DrawCircleV(b, 5.0f, kFood);
+        const std::string n = std::to_string(orders);
+        text(n, b.x - measure(n, 9) / 2, b.y - 5.5f, 9, kWhite);
+    }
+}
+
+// Rounded-square waiter, ~50% of a cell: two eyes with pupils looking the
+// way it's going, a small smile, and a short antenna (replaced by a plate
+// with a dish when carrying).
+void drawRobot(Vector2 c, bool carrying, Cell facing, float size) {
+    const float s = size;
+    const Rectangle body{c.x - s / 2, c.y - s / 2, s, s};
+    if (!carrying) {
+        DrawLineEx({c.x, body.y}, {c.x, body.y - s * 0.3f}, 1.2f, kLine);
+        outlinedCircle({c.x, body.y - s * 0.34f}, s * 0.1f, kMat, 1.0f);
+    }
+    outlinedRect(body, s * 0.26f, kRobot);
+    const Vector2 look{facing.x * s * 0.04f, facing.y * s * 0.04f};
+    for (float side : {-1.0f, 1.0f}) {
+        const Vector2 eye{c.x + side * s * 0.2f, c.y - s * 0.08f};
+        DrawCircleV(eye, s * 0.13f, kWhite);
+        DrawCircleV({eye.x + look.x, eye.y + look.y}, s * 0.065f, kLine);
+    }
+    DrawRing({c.x, c.y + s * 0.06f}, s * 0.13f, s * 0.13f + 1.0f, 30, 150, 10, kLine);
+    if (carrying) drawPlate({c.x, body.y - s * 0.1f}, s * 1.05f);
+}
+
+void drawStar(Vector2 c, float r, Color fill) {
+    Vector2 pts[10];
+    for (int i = 0; i < 10; ++i) {
+        const float ang = -PI / 2 + i * PI / 5, rad = (i % 2) ? r * 0.45f : r;
+        pts[i] = {c.x + std::cos(ang) * rad, c.y + std::sin(ang) * rad};
+    }
+    for (int i = 0; i < 10; ++i) DrawTriangle(c, pts[(i + 1) % 10], pts[i], fill);
+}
+
+// Dots every few pixels along a polyline.
+void drawDottedPath(const std::vector<Vector2>& pts, Color color) {
+    constexpr float kGap = 5.0f;
     float carry = 0;
     for (std::size_t i = 1; i < pts.size(); ++i) {
         const Vector2 a = pts[i - 1], b = pts[i];
         const float len = std::hypot(b.x - a.x, b.y - a.y);
         for (float d = kGap - carry; d < len; d += kGap)
-            DrawCircleV({a.x + (b.x - a.x) * d / len, a.y + (b.y - a.y) * d / len}, 1.2f, kFaint);
+            DrawCircleV({a.x + (b.x - a.x) * d / len, a.y + (b.y - a.y) * d / len}, 1.0f, color);
         carry = std::fmod(carry + len, kGap);
     }
 }
 
-// Rounded square, ~60% of a cell: hollow off-white on the way to the
-// kitchen, filled amber when carrying. Two tiny eyes look where it's going.
-void drawRobot(Vector2 c, bool carrying, Cell facing, bool selected) {
-    const float s = kCell * 0.6f;
-    const Rectangle body{c.x - s / 2, c.y - s / 2, s, s};
-    const float round = 4.0f / s;  // ~2 px corner radius
-    if (selected) DrawRectangleRoundedLinesEx({body.x - 4, body.y - 4, s + 8, s + 8}, 8.0f / (s + 8), 6, 1.0f, kMuted);
-    if (carrying) {
-        DrawRectangleRounded(body, round, 4, kAmber);
-    } else {
-        DrawRectangleRounded(body, round, 4, kBg);
-        DrawRectangleRoundedLinesEx({body.x + 0.75f, body.y + 0.75f, s - 1.5f, s - 1.5f}, round, 4, 1.5f, kInk);
-    }
-    const Vector2 d{static_cast<float>(facing.x), static_cast<float>(facing.y)};
-    const Vector2 side{-d.y, d.x};
-    const Color eye = carrying ? kBg : kInk;
-    for (float k : {-1.0f, 1.0f})
-        DrawCircleV({c.x + d.x * s * 0.2f + side.x * k * s * 0.17f, c.y + d.y * s * 0.2f + side.y * k * s * 0.17f},
-                    1.6f, eye);
+void drawPill(Rectangle r) {
+    DrawRectangleRounded({r.x - kEdge, r.y - kEdge, r.width + 2 * kEdge, r.height + 2 * kEdge}, 1.0f, 12, kLine);
+    DrawRectangleRounded(r, 1.0f, 12, kWhite);
 }
 
 // Given: current state. Approach: draw the scene in window coordinates; the
 // caller decides the target (screen, or an offscreen texture for recording).
-// Flat shapes, thin edges, no shadows; amber only for food.
 void drawScene(const App& a) {
     const ww::Grid& g = a.sim->grid();
-    ClearBackground(kBg);
+    ClearBackground(kPage);
     auto at = [&](Cell c) { return cellCentre(a, float(c.x), float(c.y)); };
     const std::vector<ww::RobotView> robots = a.sim->robots();
     const auto cells = static_cast<std::size_t>(g.width() * g.height());
 
+    // Floor: a faint checker inside a 2 px frame; walls are just page.
     for (int y = 0; y < g.height(); ++y)
         for (int x = 0; x < g.width(); ++x)
-            DrawRectangle(a.gridX + x * kCell, kHudH + y * kCell, kCell, kCell,
-                          g.at({x, y}) == ww::Tile::Wall ? kWall : kFloor);
-    for (Cell f : g.pickFaces()) {
-        const Vector2 c = at(f);
-        DrawRectangleRounded({c.x - kCell * 0.4f, c.y - kCell * 0.4f, kCell * 0.8f, kCell * 0.8f}, 0.2f, 4, kMat);
+            if (g.at({x, y}) != ww::Tile::Wall)
+                DrawRectangle(a.gridX + x * kCell, kHudH + y * kCell, kCell, kCell, (x + y) % 2 ? kFloorB : kFloorA);
+    for (int y = 0; y < g.height(); ++y) {
+        for (int x = 0; x < g.width(); ++x) {
+            if (g.at({x, y}) == ww::Tile::Wall) continue;
+            const float px = static_cast<float>(a.gridX + x * kCell), py = static_cast<float>(kHudH + y * kCell);
+            auto wallAt = [&](int dx, int dy) {
+                const Cell n{x + dx, y + dy};
+                return !g.inBounds(n) || g.at(n) == ww::Tile::Wall;
+            };
+            if (wallAt(0, -1)) DrawRectangleRec({px, py - kFrame, kCell, kFrame}, kLine);
+            if (wallAt(0, 1)) DrawRectangleRec({px, py + kCell, kCell, kFrame}, kLine);
+            if (wallAt(-1, 0)) DrawRectangleRec({px - kFrame, py - kFrame, kFrame, kCell + 2 * kFrame}, kLine);
+            if (wallAt(1, 0)) DrawRectangleRec({px + kCell, py - kFrame, kFrame, kCell + 2 * kFrame}, kLine);
+        }
     }
-    for (const Rectangle& r : a.shelves) DrawRectangleRounded(r, 0.12f, 4, kCounter);
+    for (Cell f : g.pickFaces()) drawMat(at(f), kCell * 0.62f);
+    for (const Rectangle& r : a.shelves) {
+        outlinedRect(r, 5.0f, kCounter);
+        const std::string label = "Kitchen";
+        if (r.width > measure(label, 13) + 16)
+            text(label, r.x + (r.width - measure(label, 13)) / 2, r.y + (r.height - 13) / 2 - 1, 13, kWhite);
+    }
 
     // Orders waiting per table.
     std::vector<int> orders(cells, 0);
-    int stuck = 0;
-    for (const ww::RobotView& r : robots) {
-        ++orders[g.index(tableOf(g, r.dropoff))];
-        stuck += r.waitTicks >= kStuckTicks;
-    }
+    for (const ww::RobotView& r : robots) ++orders[g.index(tableOf(g, r.dropoff))];
     for (std::size_t i = 0; i < cells; ++i) {
         const Cell c = g.cellAt(static_cast<int>(i));
         const ww::Tile t = g.at(c);
-        if (t == ww::Tile::Plant) DrawCircleV(at(c), kCell * 0.2f, kPlant);
-        if (t != ww::Tile::Table && t != ww::Tile::Station) continue;
-        DrawCircleV(at(c), kCell * 0.32f + 1.5f, kTableEdge);
-        DrawCircleV(at(c), kCell * 0.32f, kFloor);
-        if (orders[i] == 0) continue;
-        DrawCircleV(at(c), 3.5f, kAmber);
-        if (orders[i] > 1) text(std::to_string(orders[i]), at(c).x + kCell * 0.32f + 4, at(c).y - 8, 11, kMuted);
-    }
-    // Deliveries: the order dot fades out and a small "+1" drifts up (newest
-    // per table only, so they never stack).
-    std::vector<double> newest(cells, -1.0);
-    for (const auto& [dropoff, t0] : a.pops) newest[g.index(tableOf(g, dropoff))] = t0;
-    for (std::size_t i = 0; i < cells; ++i) {
-        if (newest[i] < 0) continue;
-        const float k = static_cast<float>((a.runTime - newest[i]) / kPopSeconds);
-        const Vector2 c = at(g.cellAt(static_cast<int>(i)));
-        DrawCircleV(c, 3.5f, withAlpha(kAmber, 1.0f - k));
-        text("+1", c.x - 6, c.y - 18 - 12 * k, 12, withAlpha(kMuted, 1.0f - k));
+        if (t == ww::Tile::Plant) drawPlant(at(c), kCell * 0.55f);
+        if (t == ww::Tile::Table || t == ww::Tile::Station) drawTable(at(c));
     }
 
-    // Paths: hovered or pinned robot, or all with T. Planned cells while
-    // there are any (space-time A*, CBS), then straight to the goal.
+    // Flow: a faint dotted line from every carrying robot to its table
+    // (planned cells while there are any, then straight). Hover, a click
+    // or T shows any robot's full planned path to its current goal.
     const std::vector<Vector2> pos = robotPositions(a);
     const int hovered = robotAt(a, GetMousePosition());
-    for (const ww::RobotView& r : robots) {
-        if (!a.showAllPaths && r.id != hovered && r.id != a.selected) continue;
+    auto pathTo = [&](const ww::RobotView& r, Cell target) {
         std::vector<Vector2> pts{pos[static_cast<std::size_t>(r.id)]};
-        bool reached = r.cell == r.goal;
+        bool reached = r.cell == target;
         for (std::size_t j = 1; j < r.route.size() && !reached; ++j) {
             pts.push_back(at(r.route[j]));
-            reached = r.route[j] == r.goal;
+            reached = r.route[j] == target;
         }
-        if (!reached) pts.push_back(at(r.goal));
-        drawDottedPath(pts);
+        if (!reached) pts.push_back(at(target));
+        return pts;
+    };
+    for (const ww::RobotView& r : robots) {
+        if (a.showAllPaths || r.id == hovered || r.id == a.selected) drawDottedPath(pathTo(r, r.goal), withAlpha(kLine, 0.7f));
+        else if (r.carrying) drawDottedPath(pathTo(r, r.dropoff), withAlpha(kLine, 0.35f));
     }
     for (const ww::RobotView& r : robots) {
         const auto id = static_cast<std::size_t>(r.id);
-        drawRobot(pos[id], r.carrying, id < a.facing.size() ? a.facing[id] : Cell{1, 0}, r.id == a.selected);
+        if (r.id == a.selected)
+            DrawRectangleRoundedLinesEx({pos[id].x - kCell * 0.38f, pos[id].y - kCell * 0.38f, kCell * 0.76f, kCell * 0.76f},
+                                        0.4f, 8, 1.0f, withAlpha(kLine, 0.5f));
+        drawRobot(pos[id], r.carrying, id < a.facing.size() ? a.facing[id] : Cell{1, 0}, kCell * 0.5f);
     }
 
-    // HUD: one quiet line.
-    char hud[96];
-    std::snprintf(hud, sizeof hud, "%lld served · %.0f/min · %d stuck%s", a.sim->stats().deliveries,
-                  deliveriesPerMinute(a), stuck, a.paused ? " · paused" : "");
-    text(hud, kMargin, 8, 15, kInk);
-    const std::string keys = "space pause · +/- speed · up/down robots · P planner · T paths";
-    text(keys, a.width - kMargin - measure(keys, 12), 10, 12, kMuted);
+    // Bubbles over tables with orders; on delivery the bubble pops away and
+    // "+1" floats up (newest delivery per table).
+    std::vector<double> newest(cells, -1.0);
+    for (const auto& [dropoff, t0] : a.pops) newest[g.index(tableOf(g, dropoff))] = t0;
+    for (std::size_t i = 0; i < cells; ++i) {
+        const Vector2 c = at(g.cellAt(static_cast<int>(i)));
+        if (orders[i] > 0) drawBubble(c, 1.0f, 1.0f, orders[i]);
+        if (newest[i] < 0) continue;
+        const float k = static_cast<float>((a.runTime - newest[i]) / kPopSeconds);
+        if (k < 0.4f && orders[i] == 0) drawBubble(c, 1.0f + k * 0.8f, 1.0f - k / 0.4f, 0);
+        text("+1", c.x + kCell * 0.32f, c.y - kCell * 0.55f - k * 14, 12, withAlpha(kFood, 1.0f - k));
+    }
 
-    // Controls: quiet text buttons; the active planner in off-white with a
-    // thin amber underline.
+    // Top: "Lunch rush" panel on the left, served badge on the right.
+    const float rush = static_cast<float>(std::fmod(a.runTime, kRushSeconds));
+    const Rectangle panel{kMargin, 9, 250, 28};
+    outlinedRect(panel, 8, kWhite);
+    text("Lunch rush", panel.x + 10, panel.y + 6, 13, kLine);
+    const Rectangle bar{panel.x + 92, panel.y + 12.5f, 104, 3};
+    DrawRectangleRounded(bar, 1.0f, 6, kFloorB);
+    DrawRectangleRounded({bar.x, bar.y, bar.width * rush / static_cast<float>(kRushSeconds), bar.height}, 1.0f, 6, kCounter);
+    char clock[16];
+    std::snprintf(clock, sizeof clock, "%d:%02d", static_cast<int>(rush) / 60, static_cast<int>(rush) % 60);
+    text(clock, panel.x + panel.width - 10 - measure(clock, 13), panel.y + 6, 13, kLine);
+
+    char served[48];
+    std::snprintf(served, sizeof served, "%lld served", a.sim->stats().deliveries);
+    const float bw = measure(served, 13) + 40;
+    const Rectangle badge{a.width - kMargin - bw, 9, bw, 28};
+    outlinedRect(badge, 14, kBadge);
+    drawStar({badge.x + 15, badge.y + 14}, 6.5f, kLine);
+    drawStar({badge.x + 15, badge.y + 14}, 5.0f, kCounter);
+    text(served, badge.x + 27, badge.y + 6, 13, kLine);
+    char rate[32];
+    std::snprintf(rate, sizeof rate, "%.0f / min%s", deliveriesPerMinute(a), a.paused ? "  (paused)" : "");
+    text(rate, badge.x - 10 - measure(rate, 12), badge.y + 7, 12, kLineSoft);
+
+    // Legend under the floor: tiny drawn icons, one line of small brown text.
+    const float ly = static_cast<float>(kHudH + a.gridH + kLegendH / 2 + 2);
+    float lx = kMargin + 8;
+    auto item = [&](auto icon, const char* label) {
+        icon(Vector2{lx, ly});
+        text(label, lx + 12, ly - 7, 12, kLine);
+        lx += 12 + measure(label, 12) + 22;
+    };
+    item([&](Vector2 c) { drawRobot({c.x, c.y + 1}, false, Cell{1, 0}, 11); }, "robot waiter");
+    item([&](Vector2 c) { drawRobot({c.x, c.y + 2}, true, Cell{1, 0}, 11); }, "carrying an order");
+    item([&](Vector2 c) { drawBubble({c.x, c.y + kCell * 0.62f}, 0.8f, 1.0f, 0); }, "order waiting");
+    item([&](Vector2 c) { drawMat(c, 11); }, "pickup spot");
+    item([&](Vector2 c) { drawPlant({c.x, c.y + 1}, 14); }, "plant (obstacle)");
+
+    // Bottom: pills on the left, planner keys on the right.
+    const std::vector<Button> buttons = layoutButtons(a);
+    for (int gidx = 0;; ++gidx) {
+        Rectangle u{};
+        bool any = false;
+        for (const Button& b : buttons) {
+            if (b.group != gidx) continue;
+            u = any ? Rectangle{u.x, u.y, b.rect.x + b.rect.width - u.x, u.height} : b.rect;
+            any = true;
+        }
+        if (!any) break;
+        drawPill(u);
+    }
     const Vector2 mouse = GetMousePosition();
-    for (const Button& b : layoutButtons(a)) {
+    for (const Button& b : buttons) {
         const float tw = measure(b.label, kButtonText);
-        const float tx = b.rect.x + (b.rect.width - tw) / 2, ty = b.rect.y + 6;
-        Color c = kMuted;
-        if (b.action == Action::None) c = kMuted;
-        else if (!b.enabled) c = kDisabled;
-        else if (b.active || CheckCollisionPointRec(mouse, b.rect)) c = kInk;
-        text(b.label, tx, ty, kButtonText, c);
-        if (b.active) DrawRectangleRec({tx, ty + kButtonText + 3, tw, 1.5f}, kAmber);
+        const float tx = b.rect.x + (b.rect.width - tw) / 2, ty = b.rect.y + (b.rect.height - kButtonText) / 2 - 1;
+        const bool hover = b.action != Action::None && b.enabled && CheckCollisionPointRec(mouse, b.rect);
+        if (b.group < 0) {  // planner key: 1.8 px outline, a thicker bottom edge
+            const Rectangle r = b.rect;
+            DrawRectangleRounded({r.x - 1.8f, r.y - 1.8f, r.width + 3.6f, r.height + 4.8f}, 0.35f, 8, kLine);
+            DrawRectangleRounded(r, 0.32f, 8, b.active ? kRobot : hover ? kFloorB : kWhite);
+        }
+        const Color c = !b.enabled ? withAlpha(kLine, 0.3f) : (b.action == Action::None ? kLineSoft : kLine);
+        text(b.label, tx, ty, kButtonText, hover && b.group >= 0 ? kCounter : c);
     }
 }
 
@@ -544,7 +713,7 @@ int record(App& a) {
         EndTextureMode();
 
         BeginDrawing();  // mirror to the window so progress is visible
-        ClearBackground(kBg);
+        ClearBackground(kPage);
         DrawTexturePro(target.texture, {0, 0, float(target.texture.width), -float(target.texture.height)},
                        {0, 0, float(a.width), float(a.height)}, {0, 0}, 0, WHITE);
         EndDrawing();
@@ -632,7 +801,8 @@ int main(int argc, char** argv) {
 
     const ww::Grid& g = a.sim->grid();
     a.width = std::max(kMinWidth, 2 * kMargin + g.width() * kCell);
-    a.height = kHudH + g.height() * kCell + kFooterH;
+    a.gridH = g.height() * kCell;
+    a.height = kHudH + a.gridH + kLegendH + kFooterH;
     a.gridX = (a.width - g.width() * kCell) / 2;
     a.shelves = shelfBlocks(g, a.gridX);
 
