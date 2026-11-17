@@ -23,7 +23,7 @@ between planners is easy to see.
 Cozy café, toned down: warm and light, but not loud. Soft brown outlines,
 small shapes with room around them, no shadows or gradients.
 
-![The café in the viewer: robot waiters, tables with order bubbles, the kitchen counter, the legend and controls](cafe.png)
+![Comparison mode: Local and CBS side by side on the café, with the congestion heatmap](cafe.png)
 
 | Element | Look |
 |---|---|
@@ -51,6 +51,11 @@ small shapes with room around them, no shadows or gradients.
   left, a pale yellow "★ N served" badge on the right. Along the bottom,
   small pills (pause, speed, "N stuck", "N robots") and planner buttons with
   a 1.8 px outline and a thicker bottom edge; the active one is filled blue.
+- **Comparison mode** (the default view): two cafés side by side, same map,
+  seed and robot count, one planner each, with a header per side (planner
+  buttons, served, /min, stuck). A congestion heatmap tints cells faint
+  coral (up to 25%) where robots have been waiting; a hover card shows
+  "#id · going to kitchen / carrying · waited N ticks".
 - **Intro card:** on launch, a white card over the dimmed, paused café:
   the title, a short story, the legend, one line per planner and a Start
   button. The "i" pill reopens it.
@@ -65,8 +70,6 @@ end of each round.
 
 ## Planned features
 
-- Comparison mode: two planners side by side on the same map and seed, a
-  congestion heatmap, and a hover card per robot.
 - Map editor: place tables, walls and plants.
 - One-way aisle arrows.
 - Challenge levels: "serve N orders in T ticks with R robots".
@@ -75,5 +78,5 @@ end of each round.
 ## Order of work
 
 A* ✅ → space-time A* ✅ → CBS ✅ → café look and map ✅ → space-time A*
-clearance fix ✅ → comparison mode → map editor → one-way aisles →
+clearance fix ✅ → comparison mode ✅ → map editor → one-way aisles →
 challenge levels → web deploy.
