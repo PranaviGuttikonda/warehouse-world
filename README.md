@@ -1,6 +1,6 @@
 # warehouse-world
 
-![Robot waiters carrying orders from the kitchen counter to café tables](docs/viewer.gif)
+![Two cafés side by side: Local jams at the kitchen counter (coral heatmap) while CBS keeps serving](docs/viewer.gif)
 
 A multi-agent path finding sim: robots pick items up and deliver them
 without colliding, using one of three planners (local rules, space-time
@@ -50,12 +50,29 @@ hash) on the first run.
 ```sh
 cmake -S . -B build -DWW_VIEWER=ON
 cmake --build build -j
-./build/viewer                           # the café, 16 robots (starts with an intro card)
+./build/viewer                           # Local vs CBS side by side on the café (intro card first)
+./build/viewer --left stastar --right cbs --robots 32
+./build/viewer --single --planner cbs    # one café, one planner
 ./build/viewer --no-intro                # straight into the run
-./build/viewer --robots 32 --hz 15 --seed 3 --planner cbs
 ./build/viewer --map warehouse           # the benchmark map, same theme
-./build/viewer --robots 24 --planner cbs --record docs/viewer.gif --frames 125 --fps 15  # the GIF above
+./build/viewer --robots 24 --record docs/viewer.gif --frames 115 --fps 15  # the GIF above
 ```
+
+**Comparison mode** is the default view: two cafés side by side with the
+same map, seed and robot count, each with its own planner (Local vs CBS to
+start). Each side's header has its planner buttons and its own "served",
+orders per minute and "stuck" count. The shared controls drive both, and
+changing either planner or the robot count restarts both, so they stay
+tick for tick in step. "Compare" (or <kbd>S</kbd>) switches to a single
+café and back.
+
+- **Heatmap** (on by default side by side, <kbd>H</kbd> or the pill): every
+  cell keeps a count of robot wait-ticks that fades over about 20 ticks,
+  tinted coral up to 25% opacity, on the same scale for both sides. The jams
+  in front of the counter light up under Local and mostly stay pale under
+  CBS.
+- **Hover card:** hovering a robot shows "#id · going to kitchen / carrying ·
+  waited N ticks". Clicking it pins its planned path.
 
 On launch an intro card explains the scene and the three planners; Start
 (or Space, Enter, any click) begins the run, and the "i" pill reopens it.
@@ -73,17 +90,15 @@ How to read it (the legend under the floor says the same):
   every robot's path.
 
 Everything is clickable, so the browser build works without a keyboard:
-pills for pause, speed −/+ and robot count −/+ along the bottom, and one
-button per planner (the active one is filled blue). Changing the planner or robot count
-restarts the run with the same seed, so comparisons are fair. Keys do the
-same: <kbd>space</kbd> pause, <kbd>+</kbd>/<kbd>-</kbd> speed,
-<kbd>↑</kbd>/<kbd>↓</kbd> robots, <kbd>P</kbd> next planner, <kbd>T</kbd>
-all paths. The top shows a "Lunch rush" timer (it loops for now;
-the game loop comes later), orders served, and orders per minute at the
-current speed (over the last 10 s); the "stuck" pill counts robots blocked
-3+ ticks in a row. On Linux, raylib also needs
-the X11 and OpenGL development packages. The UI font is IBM Plex Sans
-(SIL Open Font License, `assets/fonts/OFL.txt`), embedded at build time.
+pills for pause, speed −/+, robot count −/+, Compare, Heatmap and "i" along
+the bottom, and planner buttons (the active one is filled blue). Keys:
+<kbd>space</kbd> pause, <kbd>+</kbd>/<kbd>-</kbd> speed, <kbd>↑</kbd>/<kbd>↓</kbd>
+robots, <kbd>P</kbd> next planner (the right side when comparing),
+<kbd>S</kbd> compare on/off, <kbd>H</kbd> heatmap, <kbd>T</kbd> all paths.
+The top shows a "Lunch rush" timer (it loops for now; the game loop comes
+later). On Linux, raylib also needs the X11 and OpenGL development
+packages. The UI font is IBM Plex Sans (SIL Open Font License,
+`assets/fonts/OFL.txt`), embedded at build time.
 
 ### In the browser (WebAssembly)
 
@@ -301,7 +316,7 @@ See [docs/VISION.md](docs/VISION.md).
 - [x] Conflict-based search (CBS)
 - [x] Café look and café map
 - [x] Space-time A* clearance fix (station no-parking rule only for drop-offs with ≤ 2 open neighbours)
-- [ ] Comparison mode: split-screen planners, congestion heatmap, hover card
+- [x] Comparison mode: split-screen planners, congestion heatmap, hover card
 - [ ] Map editor
 - [ ] One-way aisles
 - [ ] Challenge levels
