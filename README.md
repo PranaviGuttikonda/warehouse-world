@@ -1,5 +1,7 @@
 # warehouse-world
 
+**Play it in your browser: [pranaviguttikonda.github.io/warehouse-world](https://pranaviguttikonda.github.io/warehouse-world/)**
+
 ![Two cafés side by side: Local jams at the kitchen counter (coral heatmap) while CBS keeps serving](docs/viewer.gif)
 
 A multi-agent path finding sim: robots pick items up and deliver them
@@ -112,7 +114,8 @@ python3 -m http.server -d build-web 8000  # open http://localhost:8000/viewer.ht
 ```
 
 The output is `viewer.html`, `viewer.js` and `viewer.wasm`; any static file
-host can serve them. The page scales the game to fit the browser window
+host can serve them. Every push to main builds them the same way and
+publishes them to GitHub Pages (`.github/workflows/pages.yml`). The page scales the game to fit the browser window
 (aspect kept, refitted on resize) and renders at the device pixel ratio, so
 it's sharp on high-DPI screens.
 
@@ -319,9 +322,9 @@ See [docs/VISION.md](docs/VISION.md).
 - [x] Café look and café map
 - [x] Space-time A* clearance fix (station no-parking rule only for drop-offs with ≤ 2 open neighbours)
 - [x] Comparison mode: split-screen planners, congestion heatmap, hover card
+- [x] Web deploy: GitHub Pages from Actions on every push to main; CI runs the tests on every PR
 - [ ] Map editor
 - [ ] One-way aisles
 - [ ] Challenge levels
-- [ ] Web deploy
 - [ ] Later: smarter task assignment (which robot takes which order)
 - [ ] Stretch: authoritative server streaming state over TCP

@@ -1,0 +1,51 @@
+# Given: a push to main (or a PR). Approach: build the viewer with
+# Emscripten and publish viewer.html as the site's index.html; PRs only
+# build, so a broken web build shows up before merge.
+name: Web
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: mymindstorm/setup-emsdk@v14
+        with:
+          version: 4.0.0
+      - name: Configure
+        run: emcmake cmake -S . -B build-web -DWW_VIEWER=ON
+      - name: Build
+        run: cmake --build build-web -j --target viewer
+      - name: Assemble site
+        run: |
+          mkdir -p site
+          cp build-web/viewer.html site/index.html
+          cp build-web/viewer.js build-web/viewer.wasm site/
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: site
+
+  deploy:
+    if: github.event_name != 'pull_request'
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4

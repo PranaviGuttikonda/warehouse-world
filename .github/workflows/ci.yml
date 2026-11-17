@@ -1,0 +1,20 @@
+# Given: a PR or a push to main. Approach: build the core, the terminal app
+# and the tests (no viewer, so no downloads), then run ww_tests.
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+jobs:
+  tests:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Configure
+        run: cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
+      - name: Build
+        run: cmake --build build -j --target ww_core warehouse ww_tests
+      - name: Test
+        run: ./build/ww_tests
