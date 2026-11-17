@@ -3,15 +3,22 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>warehouse-world</title>
+<meta name="theme-color" content="#FBF4E9">
+<title>Rush Hour Café</title>
 <style>
-  html, body { margin: 0; height: 100%; background: #111318; }
-  body { display: flex; align-items: center; justify-content: center; }
-  canvas { max-width: 100vw; outline: none; }
+  html, body { margin: 0; height: 100%; background: #FBF4E9; overflow: hidden; }
+  body { display: flex; flex-direction: column; align-items: center; justify-content: center; }
+  /* The viewer sets the canvas CSS size each frame to fit the window. */
+  canvas { display: block; outline: none; touch-action: none; background: #FBF4E9; }
+  #foot { padding: 6px 16px 10px; color: #5A4636; opacity: 0.75;
+          font: 12px/1.4 "IBM Plex Sans", system-ui, -apple-system, "Segoe UI", sans-serif; text-align: center; }
+  #foot a { color: inherit; }
 </style>
 </head>
 <body>
 <canvas id="canvas" tabindex="0" oncontextmenu="event.preventDefault()"></canvas>
+<div id="foot">Rush Hour Café · multi-agent path finding in C++ ·
+  <a href="https://github.com/PranaviGuttikonda/warehouse-world">GitHub</a></div>
 <script>
   var Module = { canvas: document.getElementById('canvas') };
   Module.canvas.focus();
