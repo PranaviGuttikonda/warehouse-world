@@ -207,3 +207,27 @@ TEST(stastar_keeps_stations_clear_in_a_crowd) {
     CHECK(sim.stats().deliveries > 3500);
     CHECK(sim.validate().empty());
 }
+
+TEST(stastar_cafe_with_40_robots_keeps_moving) {
+    // Regression: the station no-parking zone used to apply around every
+    // drop-off. Around the café's 40 table-side drop-offs it covered 168 of
+    // 206 floor cells, and 40 robots gridlocked by tick ~200 (113 deliveries
+    // in 1,500 ticks). Now it applies only to cramped stations: ~1,800.
+    Simulation sim(Grid::parse(cafeMap()), {40, 1, Planner::SpaceTime});
+    for (int t = 0; t < 1500; ++t) sim.step();
+    CHECK(sim.stats().deliveries > 1000);
+    CHECK(sim.validate().empty());
+}
+
+TEST(stastar_warehouse_corner_stations_stay_cramped) {
+    // The zone still applies to the warehouse's corner stations (2 open
+    // neighbours each), so its 28-robot seed-1 run is unchanged.
+    Simulation sim(Grid::parse(defaultMap()), {28, 1, Planner::SpaceTime});
+    for (int t = 0; t < 6000; ++t) sim.step();
+    CHECK(sim.stats().deliveries > 3500);
+    for (Cell s : sim.grid().stations()) {
+        int exits = 0;
+        for (Cell d : kNeighbors) exits += sim.grid().passable({s.x + d.x, s.y + d.y});
+        CHECK(exits <= kCrampedExits);
+    }
+}

@@ -110,11 +110,16 @@ void spaceTimeSystem(Registry& reg, const Grid& grid, DistanceCache& dist, Reser
     const std::size_t first = static_cast<std::size_t>(now % static_cast<long long>(n));
 
     // No parking on anyone's current goal, nor within kStationClearance of a
-    // station: a corner station has only two access cells, and robots
-    // parked there would seal it.
+    // cramped station (<= kCrampedExits open neighbours): a corner station
+    // has only two access cells, and robots parked there would seal it.
+    // Drop-offs in the open (beside café tables) don't need the zone, and
+    // around 40 of them it would leave almost nowhere to park.
     std::vector<int> noPark(occupancy.size(), 0);
     for (Entity e : order) ++noPark[grid.index(reg.get<Task>(e).goal())];
     for (Cell s : grid.stations()) {
+        int exits = 0;
+        for (Cell d : kNeighbors) exits += grid.passable({s.x + d.x, s.y + d.y});
+        if (exits > kCrampedExits) continue;
         const auto& field = dist.to(s);
         for (std::size_t i = 0; i < field.size(); ++i)
             if (field[i] != DistanceCache::kUnreachable && field[i] <= kStationClearance) ++noPark[i];

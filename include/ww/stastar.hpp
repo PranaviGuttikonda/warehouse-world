@@ -51,14 +51,15 @@ std::optional<SpaceTimePlan> planSpaceTime(const Grid& grid, const ReservationTa
 /// due a retry) release their reservations and replan in a rotating order.
 /// A robot that can't reach its goal waits where it is (retrying with
 /// backoff), unless it stands where nobody may park (another robot's goal, or
-/// within kStationClearance of a station): then it moves to the nearest cell
-/// outside those, so it can't block a goal or seal a station. Waiting is always safe (the old plan
+/// within kStationClearance of a cramped station): then it moves to the
+/// nearest cell outside those, so it can't block a goal or seal a station. Waiting is always safe (the old plan
 /// parked it there); mid-path it keeps the old plan instead. Then every
 /// robot steps to its plan's next cell, all at once.
 void spaceTimeSystem(Registry& reg, const Grid& grid, DistanceCache& dist, ReservationTable& table,
                      std::vector<Entity>& occupancy, Stats& stats);
 
 inline constexpr int kMaxRetryBackoff = 8;   // ticks between replans when stuck
-inline constexpr int kStationClearance = 2;  // no parking this close to a station
+inline constexpr int kStationClearance = 2;  // no parking this close to a cramped station
+inline constexpr int kCrampedExits = 2;      // a station with at most this many open neighbours is cramped
 
 }  // namespace ww

@@ -176,13 +176,15 @@ How it works (`stastar.hpp`):
   robots parked on their goal: the next robot couldn't even plan towards
   a station until the previous one left, and at 16 robots it made 225
   deliveries in the first 1,200 ticks to local's 303 (seed 1).
-- **Keep station approaches clear.** No robot parks within 2 cells of a
-  station. A corner station has only two access cells, and robots stepping
-  off it onto them sealed it; at 28 robots (seed 1) every robot ended up
-  queued behind one corner by tick 4,600: 2,491 deliveries, against 14,587
-  with the clearance. A robot stuck
-  inside that zone, or on another robot's goal, moves out of the way
-  instead of waiting.
+- **Keep cramped station approaches clear.** No robot parks within 2 cells
+  of a station with at most 2 open neighbours. A corner station has only two
+  access cells, and robots stepping off it onto them sealed it; at 28 robots
+  (seed 1) every robot ended up queued behind one corner by tick 4,600:
+  2,491 deliveries, against 14,587 with the clearance. A robot stuck inside
+  that zone, or on another robot's goal, moves out of the way instead of
+  waiting. Drop-offs in the open don't get the zone: applied around all 40
+  table-side drop-offs on the café map, it covered 168 of 206 floor cells
+  and gridlocked 40 robots (see the café map below).
 
 **Limits.** Robots plan one after another and can't ask each other to
 move, so at high density they can still box each other in (40 robots
@@ -262,8 +264,8 @@ seeds 1–5 (`scripts/bench.sh --map cafe --planner …`):
 |---|---|---|---|---|---|---|---|---|---|
 | Local | 2875 | 5206 | 5785 | 4726 | 3192 | 2097 | 1345 | 1075 | 500 |
 | Local, min-max | 1418-3344 | 5182-5248 | 5710-5849 | 4390-4916 | 2942-3401 | 1918-2407 | 1280-1390 | 1011-1108 | 334-611 |
-| Space-time A\* | 3687 | 7278 | 10695 | 13978 | 17049 | 19935 | 22573 | 23589 | 154 |
-| Space-time A\*, min-max | 3662-3719 | 7253-7297 | 10646-10734 | 13943-14024 | 17008-17079 | 19907-19970 | 22522-22607 | 23520-23687 | 113-208 |
+| Space-time A\* | 3639 | 7001 | 10127 | 12977 | 15576 | 17927 | 19966 | 21776 | 24479 |
+| Space-time A\*, min-max | 3621-3668 | 6977-7021 | 10097-10142 | 12928-13012 | 15546-15654 | 17829-18025 | 19871-20029 | 21648-21879 | 24375-24590 |
 | **CBS** | **3697** | **7341** | **10916** | **14369** | **17683** | **20793** | **23630** | **26185** | **29597** |
 | CBS, min-max | 3656-3748 | 7303-7365 | 10867-10959 | 14318-14465 | 17607-17749 | 20745-20835 | 23547-23746 | 26107-26252 | 29505-29637 |
 
@@ -274,13 +276,17 @@ low counts, but the counter changes the shape of the curves:
   counter: 40 robots deliver less than 4.
 - **CBS** keeps scaling almost linearly to 40 robots (29,597), with all five
   seeds within 0.5% of each other.
-- **Space-time A\*** tracks CBS up to 32 robots, then gridlocks at 40 on
-  every seed (154 deliveries; stuck by tick ~200). The cause is its station
-  clearance rule from phase 2: no parking within 2 cells of a drop-off cell.
-  It was tuned for the warehouse's four corner stations (20 of 164 floor
-  cells). The café has 40 drop-off cells around its tables, and the rule
-  covers 168 of 206 floor cells. That leaves 38 cells where a robot may stop,
-  fewer than 40 robots.
+- **Space-time A\*** scales to 40 robots (24,479), but stays below CBS
+  everywhere and falls further behind as the café fills (17% fewer at 40).
+  Its station no-parking zone now applies only to cramped stations (at most
+  2 open neighbours), so the café's open table-side drop-offs get none.
+  Before that change, the zone covered 168 of 206 café floor cells and 40
+  robots gridlocked on every seed (154 deliveries). The change cost
+  throughput at 4–32 robots, though: 1–12% fewer deliveries than with the
+  zone (e.g. 21,776 against 23,589 at 32). A plausible cause is robots
+  parking right beside tables after a delivery and crowding the next
+  robot's way in. A smaller zone (radius 1) around open drop-offs might
+  recover it; not tried yet.
 
 ## Roadmap
 
@@ -293,8 +299,8 @@ See [docs/VISION.md](docs/VISION.md).
 - [x] A*
 - [x] Space-time A* with planner buttons
 - [x] Conflict-based search (CBS)
-- [ ] Café look and café map
-- [ ] Space-time A* clearance fix (station no-parking rule only for drop-offs with ≤ 2 open neighbours)
+- [x] Café look and café map
+- [x] Space-time A* clearance fix (station no-parking rule only for drop-offs with ≤ 2 open neighbours)
 - [ ] Comparison mode: split-screen planners, congestion heatmap, hover card
 - [ ] Map editor
 - [ ] One-way aisles
