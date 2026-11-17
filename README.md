@@ -112,7 +112,9 @@ python3 -m http.server -d build-web 8000  # open http://localhost:8000/viewer.ht
 ```
 
 The output is `viewer.html`, `viewer.js` and `viewer.wasm`; any static file
-host can serve them.
+host can serve them. The page scales the game to fit the browser window
+(aspect kept, refitted on resize) and renders at the device pixel ratio, so
+it's sharp on high-DPI screens.
 
 ## How it works
 

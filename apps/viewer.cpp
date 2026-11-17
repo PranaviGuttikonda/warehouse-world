@@ -32,6 +32,9 @@
 
 #if defined(__EMSCRIPTEN__)
 #include <emscripten/emscripten.h>
+#include <emscripten/html5.h>
+
+#include "rlgl.h"
 #else
 #include "external/msf_gif.h"  // ships with raylib, compiled into libraylib
 #endif
@@ -88,26 +91,26 @@ constexpr PlannerChoice kPlanners[] = {
     {ww::Planner::Cbs, "CBS"},
 };
 
-const char* plannerLabel(ww::Planner p) {
-    for (const PlannerChoice& c : kPlanners)
-        if (c.planner == p) return c.label;
-    return "?";
-}
-
 // The UI font, loaded once after the window opens.
 Font gFont{};
 // Cell size for the current view; every grid shape scales with it.
 float gCell = kCellSplit;
+#if defined(__EMSCRIPTEN__)
+float gScale = 1;  // canvas pixels per layout pixel
+int gFontPx = 32;  // current font raster size
+#endif
 
-// Given: an open window. Approach: rasterise the embedded TTF once at a size
-// big enough for the 2x GIF render, with bilinear filtering for the smaller
-// sizes we draw. ASCII plus the middle dot and the é in "Café".
-void loadUiFont() {
+// Given: an open window and a raster size (32 covers the 2x GIF render; the
+// web build asks for more on large high-DPI canvases). Approach: rasterise
+// the embedded TTF, bilinear filtering for the smaller sizes we draw. ASCII
+// plus the middle dot and the é in "Café".
+void loadUiFont(int px = 32) {
+    if (gFont.texture.id != 0) UnloadFont(gFont);
     std::vector<int> codepoints;
     for (int c = 32; c < 127; ++c) codepoints.push_back(c);
     codepoints.push_back(0x00B7);
     codepoints.push_back(0x00E9);
-    gFont = LoadFontFromMemory(".ttf", kUiFontData, static_cast<int>(sizeof(kUiFontData)), 32, codepoints.data(),
+    gFont = LoadFontFromMemory(".ttf", kUiFontData, static_cast<int>(sizeof(kUiFontData)), px, codepoints.data(),
                                static_cast<int>(codepoints.size()));
     SetTextureFilter(gFont.texture, TEXTURE_FILTER_BILINEAR);
 }
@@ -222,7 +225,9 @@ void layoutView(App& a) {
         s.originY = top;
         if (s.sim) s.shelves = shelfBlocks(s.sim->grid(), s.originX, s.originY, a.cell);
     }
-    if (IsWindowReady()) SetWindowSize(a.width, a.height);
+#if !defined(__EMSCRIPTEN__)
+    if (IsWindowReady()) SetWindowSize(a.width, a.height);  // the web build fits the canvas each frame
+#endif
 }
 
 void snapshot(const ww::Simulation& sim, std::vector<Cell>& into) {
@@ -469,6 +474,9 @@ void handleInput(App& a) {
     } else if (touches > 0 && a.prevTouches == 0) {
         clicked = true;
         at = GetTouchPosition(0);
+#if defined(__EMSCRIPTEN__)
+        at = {at.x / gScale, at.y / gScale};  // canvas pixels -> layout pixels (mouse uses SetMouseScale)
+#endif
     }
     a.prevTouches = touches;
 
@@ -960,14 +968,65 @@ void drawScene(const App& a) {
     if (a.showIntro) drawIntro(a);
 }
 
+#if defined(__EMSCRIPTEN__)
+// Given: the browser window and the layout size. Approach: fit the layout
+// into the window (aspect kept, as large as fits, above the footer line),
+// size the canvas backing store at devicePixelRatio so it's crisp and set
+// its CSS size separately; mouse input is scaled back to layout pixels and
+// the font is re-rasterised when the scale changes a lot.
+void fitCanvas(const App& a) {
+    const double dpr = std::max(1.0, emscripten_get_device_pixel_ratio());
+    const double vw = EM_ASM_DOUBLE({ return window.innerWidth; });
+    const double vh = EM_ASM_DOUBLE({
+        const foot = document.getElementById('foot');
+        return window.innerHeight - (foot ? foot.offsetHeight : 0);
+    });
+    const double fit = std::max(0.1, std::min(vw / a.width, vh / a.height));
+    const int bw = std::max(1, static_cast<int>(std::lround(a.width * fit * dpr)));
+    const int bh = std::max(1, static_cast<int>(std::lround(a.height * fit * dpr)));
+    if (bw != GetScreenWidth() || bh != GetScreenHeight()) SetWindowSize(bw, bh);
+    emscripten_set_element_css_size("#canvas", bw / dpr, bh / dpr);  // after: resizing clears the CSS size
+    gScale = static_cast<float>(bw) / a.width;
+    SetMouseScale(1 / gScale, 1 / gScale);
+    const int px = std::clamp(static_cast<int>(std::lround(20 * gScale)), 32, 96);
+    if (std::abs(px - gFontPx) >= 4) loadUiFont(gFontPx = px);
+    // The intro dims the canvas; dim the page to match so no box shows.
+    static int dimmed = -1;
+    if (dimmed != a.showIntro) {
+        dimmed = a.showIntro;
+        EM_ASM({
+            if ($0) document.body.style.background = '#CEC3B7';  // kPage under 28% kLine
+            else document.body.style.removeProperty('background');
+        }, dimmed);
+    }
+}
+#endif
+
 void draw(const App& a) {
     BeginDrawing();
+#if defined(__EMSCRIPTEN__)
+    // The WebGL canvas has alpha: translucent draws would lower it and let
+    // the page show through (washing out the intro dim), so after the clear
+    // only colour is written.
+    rlColorMask(true, true, true, true);
+    ClearBackground(kPage);
+    rlColorMask(true, true, true, false);
+    Camera2D camera{};
+    camera.zoom = gScale;
+    BeginMode2D(camera);
     drawScene(a);
+    EndMode2D();
+#else
+    drawScene(a);
+#endif
     EndDrawing();
 }
 
 void frame(void* arg) {
     App& a = *static_cast<App*>(arg);
+#if defined(__EMSCRIPTEN__)
+    fitCanvas(a);
+#endif
     handleInput(a);
     update(a, GetFrameTime());
     draw(a);
