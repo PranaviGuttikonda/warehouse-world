@@ -83,5 +83,5 @@ end of each round.
 ## Order of work
 
 A* ✅ → space-time A* ✅ → CBS ✅ → café look and map ✅ → space-time A*
-clearance fix ✅ → comparison mode ✅ → map editor → one-way aisles →
-challenge levels → web deploy.
+clearance fix ✅ → comparison mode ✅ → web deploy ✅ → map editor →
+one-way aisles → challenge levels.
