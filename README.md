@@ -50,21 +50,31 @@ hash) on the first run.
 ```sh
 cmake -S . -B build -DWW_VIEWER=ON
 cmake --build build -j
-./build/viewer                           # Local vs CBS side by side on the café (intro card first)
+./build/viewer                           # Local vs CBS side by side, 24 robots (intro card first)
 ./build/viewer --left stastar --right cbs --robots 32
-./build/viewer --single --planner cbs    # one café, one planner
+./build/viewer --single --planner cbs    # one café, one planner, 16 robots
+./build/viewer --stacked                 # the phone layout: cafés one above the other
 ./build/viewer --no-intro                # straight into the run
 ./build/viewer --map warehouse           # the benchmark map, same theme
-./build/viewer --robots 24 --record docs/viewer.gif --frames 115 --fps 15  # the GIF above
+./build/viewer --record docs/viewer.gif --frames 115 --fps 15  # the GIF above
 ```
 
 **Comparison mode** is the default view: two cafés side by side with the
 same map, seed and robot count, each with its own planner (Local vs CBS to
-start). Each side's header has its planner buttons and its own "served",
-orders per minute and "stuck" count. The shared controls drive both, and
-changing either planner or the robot count restarts both, so they stay
-tick for tick in step. "Compare" (or <kbd>S</kbd>) switches to a single
-café and back.
+start, 24 robots). Each side's header has its planner buttons and its own
+"served", orders per minute, "stuck" count and congestion readout. The
+shared controls drive both, and changing either planner or the robot count
+restarts both, so they stay tick for tick in step. "Compare" (or
+<kbd>S</kbd>) switches to a single café (16 robots unless you picked a
+count) and back.
+
+- **Verdict:** a line between the two sides, e.g. "CBS is serving 6.8×
+  more" (orders served since the last restart), or "About even" within 10%.
+  It appears after the first 10 seconds.
+- **Congestion readout:** "low / medium / high congestion" per side, from
+  the share of its robots that have been waiting lately (under 15%, under
+  40%, above), with a swatch in the heatmap tint. A pale side means less
+  waiting, not that the heatmap is off.
 
 - **Heatmap** (on by default side by side, <kbd>H</kbd> or the pill): every
   cell keeps a count of robot wait-ticks that fades over about 20 ticks,
@@ -114,7 +124,9 @@ python3 -m http.server -d build-web 8000  # open http://localhost:8000/viewer.ht
 The output is `viewer.html`, `viewer.js` and `viewer.wasm`; any static file
 host can serve them. The page scales the game to fit the browser window
 (aspect kept, refitted on resize) and renders at the device pixel ratio, so
-it's sharp on high-DPI screens.
+it's sharp on high-DPI screens. In a narrow portrait window (a phone) it
+switches to the stacked layout: Local on top, CBS below, the verdict
+between them and compact controls at the bottom.
 
 ## How it works
 

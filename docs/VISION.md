@@ -55,7 +55,12 @@ small shapes with room around them, no shadows or gradients.
   seed and robot count, one planner each, with a header per side (planner
   buttons, served, /min, stuck). A congestion heatmap tints cells faint
   coral (up to 25%) where robots have been waiting; a hover card shows
-  "#id · going to kitchen / carrying · waited N ticks".
+  "#id · going to kitchen / carrying · waited N ticks". A verdict line
+  between the sides ("CBS is serving 2.4× more", or "About even") and a
+  low / medium / high congestion readout next to each "served" badge.
+  Split view starts at 24 robots, single view at 16.
+- **Phones:** in portrait the two cafés stack (Local on top, CBS below),
+  with the verdict between them and compact controls at the bottom.
 - **Intro card:** on launch, a white card over the dimmed, paused café:
   the title, a short story, the legend, one line per planner and a Start
   button. The "i" pill reopens it.

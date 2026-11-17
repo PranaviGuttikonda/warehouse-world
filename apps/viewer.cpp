@@ -59,6 +59,11 @@ constexpr int kStuckTicks = 3;          // a robot counts as stuck after this ma
 constexpr float kHeatDecay = 0.97f;     // per tick: a wait fades to half in ~23 ticks
 constexpr float kHeatFull = 6.0f;       // heat at which the tint is strongest
 constexpr float kHeatMaxAlpha = 0.25f;  // strongest tint
+constexpr int kRobotsSplit = 24;        // default robot count, split view
+constexpr int kRobotsSingle = 16;       // ... single view
+constexpr double kVerdictDelay = 10.0;  // seconds after a restart before the verdict shows
+constexpr float kStackedW = 400;        // layout width of the phone (stacked) view
+constexpr float kStackedMargin = 10;
 
 // Cozy, toned-down café palette (docs/VISION.md). No shadows, no gradients.
 const Color kLine{90, 70, 54, 255};          // #5A4636 soft brown outlines and text
@@ -91,6 +96,12 @@ constexpr PlannerChoice kPlanners[] = {
     {ww::Planner::Cbs, "CBS"},
 };
 
+const char* plannerLabel(ww::Planner p) {
+    for (const PlannerChoice& c : kPlanners)
+        if (c.planner == p) return c.label;
+    return "?";
+}
+
 // The UI font, loaded once after the window opens.
 Font gFont{};
 // Cell size for the current view; every grid shape scales with it.
@@ -103,13 +114,14 @@ int gFontPx = 32;  // current font raster size
 // Given: an open window and a raster size (32 covers the 2x GIF render; the
 // web build asks for more on large high-DPI canvases). Approach: rasterise
 // the embedded TTF, bilinear filtering for the smaller sizes we draw. ASCII
-// plus the middle dot and the é in "Café".
+// plus the middle dot, the é in "Café" and the times sign.
 void loadUiFont(int px = 32) {
     if (gFont.texture.id != 0) UnloadFont(gFont);
     std::vector<int> codepoints;
     for (int c = 32; c < 127; ++c) codepoints.push_back(c);
     codepoints.push_back(0x00B7);
     codepoints.push_back(0x00E9);
+    codepoints.push_back(0x00D7);  // the times sign in the verdict
     gFont = LoadFontFromMemory(".ttf", kUiFontData, static_cast<int>(sizeof(kUiFontData)), px, codepoints.data(),
                                static_cast<int>(codepoints.size()));
     SetTextureFilter(gFont.texture, TEXTURE_FILTER_BILINEAR);
@@ -127,7 +139,8 @@ Color withAlpha(Color c, float a) {
 }
 
 struct Options {
-    int robots = 16;
+    int robots = kRobotsSplit;  // single view: kRobotsSingle unless --robots is given
+    bool robotsSet = false;     // --robots given
     std::uint64_t seed = 42;
     int hzIndex = 2;  // 8 Hz, same as the terminal app
     ww::Planner planners[2] = {ww::Planner::Local, ww::Planner::Cbs};  // left, right
@@ -137,6 +150,7 @@ struct Options {
     int recordFrames = 240;
     int recordFps = 30;
     bool intro = true;
+    bool stacked = false;  // phone layout; the web build picks it from the window
 };
 
 // One café: a simulation plus everything the view keeps about it.
@@ -150,6 +164,7 @@ struct Side {
     std::deque<std::pair<double, long long>> rateSamples;
     std::vector<Rectangle> shelves;
     float originX = 0, originY = 0;  // top-left of the grid
+    float headerY = 0;               // planner keys and served badge (split or stacked)
 };
 
 struct App {
@@ -168,6 +183,10 @@ struct App {
     int width = 0, height = 0;
     float cell = kCellSplit;
     int prevTouches = 0;
+    bool stacked = false;     // phone layout: cafés stacked, compact controls
+    bool robotsSet = false;   // the robot count was chosen (flag or +/-), keep it across views
+    double runStart = 0.0;    // runTime at the last restart
+    float verdictY = 0, legendY = 0, footerY = 0;
 };
 
 double hz(const App& a) { return kHzSteps[a.opt.hzIndex]; }
@@ -175,6 +194,7 @@ double hz(const App& a) { return kHzSteps[a.opt.hzIndex]; }
 float gridPxW(const App& a) { return a.gridW * a.cell; }
 float gridPxH(const App& a) { return a.gridH * a.cell; }
 float gridTop(const App& a) { return static_cast<float>(kHudH + (a.split ? kSideH : 0)); }
+float margin(const App& a) { return a.stacked ? kStackedMargin : kMargin; }
 
 // Given: the grid. Approach: flood-fill each counter block and keep its
 // bounding box, so a block draws as one counter instead of separate cells.
@@ -207,8 +227,39 @@ std::vector<Rectangle> shelfBlocks(const ww::Grid& g, float originX, float origi
 }
 
 // Given: the view mode and grid size. Approach: pick the cell size, place
-// each side's grid, and size the window; resizes it if it's already open.
+// each side's grid, header, legend and controls, and size the window;
+// resizes it if it's already open. Stacked (phone): a narrow column with the
+// cafés one above the other, the verdict between them, the legend on two
+// rows and two rows of controls.
 void layoutView(App& a) {
+    if (a.stacked) {
+        const float m = kStackedMargin;
+        a.width = static_cast<int>(kStackedW);
+        a.cell = (kStackedW - 2 * m) / a.gridW;
+        gCell = a.cell;
+        float y = 46;  // under the lunch-rush panel
+        for (std::size_t s = 0; s < a.sides.size(); ++s) {
+            Side& side = a.sides[s];
+            side.headerY = y;
+            y += 46;  // keys + badge row, stats row
+            side.originX = (kStackedW - gridPxW(a)) / 2;
+            side.originY = y;
+            if (side.sim) side.shelves = shelfBlocks(side.sim->grid(), side.originX, side.originY, a.cell);
+            y += gridPxH(a) + 6;
+            if (s == 0 && a.sides.size() == 2) {
+                a.verdictY = y + 4;
+                y += 30;
+            }
+        }
+        a.legendY = y + 12;
+        y += 2 * 18 + 8;  // two legend rows
+        a.footerY = y;
+        a.height = static_cast<int>(y + 2 * 26 + 8 + 12);  // two rows of controls
+#if !defined(__EMSCRIPTEN__)
+        if (IsWindowReady()) SetWindowSize(a.width, a.height);
+#endif
+        return;
+    }
     a.cell = a.split ? kCellSplit : kCellSingle;
     gCell = a.cell;
     const float top = gridTop(a);
@@ -221,8 +272,12 @@ void layoutView(App& a) {
         a.sides[0].originX = (a.width - gridPxW(a)) / 2;
     }
     a.height = static_cast<int>(top + gridPxH(a)) + kLegendH + kFooterH;
+    a.verdictY = 15;  // top row, centred
+    a.legendY = top + gridPxH(a) + kLegendH / 2.0f + 2;
+    a.footerY = static_cast<float>(a.height - kFooterH + 8);
     for (Side& s : a.sides) {
         s.originY = top;
+        s.headerY = kHudH + 3.0f;
         if (s.sim) s.shelves = shelfBlocks(s.sim->grid(), s.originX, s.originY, a.cell);
     }
 #if !defined(__EMSCRIPTEN__)
@@ -257,6 +312,7 @@ void restart(App& a) {
     a.gridH = a.sides[0].sim->grid().height();
     a.timestep = ww::FixedTimestep(1.0 / hz(a));
     a.selectedSide = a.selectedId = -1;
+    a.runStart = a.runTime;
     layoutView(a);
 }
 
@@ -298,12 +354,14 @@ float addPlannerKeys(std::vector<Button>& out, const App& a, int side, float x, 
 
 // Given: app state. Approach: one layout used for both drawing and hit
 // testing, so what you see is what you click. Bottom left: pills for pause,
-// speed, (stuck,) robot count, compare, heatmap and info. Planner keys sit
-// bottom right in single view, or in each side's header in split-screen.
+// speed, (stuck,) robot count, compare, heatmap and info (two rows when
+// stacked). Planner keys sit bottom right in the wide single view, else in
+// each side's header.
 std::vector<Button> layoutButtons(const App& a) {
     std::vector<Button> out;
-    const float y = static_cast<float>(a.height - kFooterH + 8), h = 26;
-    float x = kMargin;
+    float y = a.footerY;
+    const float h = 26;
+    float x = margin(a);
     int group = 0;
     auto add = [&](std::string label, Action act, bool enabled = true, float pad = 10, bool active = false) {
         const float w = measure(label, kButtonText) + 2 * pad;
@@ -334,15 +392,19 @@ std::vector<Button> layoutButtons(const App& a) {
     add(value, Action::None, true, 2);
     add("+", Action::MoreRobots, a.opt.robots < maxRobots(a), 9);
     nextPill();
+    if (a.stacked) {  // second row
+        x = margin(a);
+        y += h + 8;
+    }
     add("Compare", Action::Split, true, 12, a.split);
     nextPill();
     add("Heatmap", Action::Heatmap, true, 12, a.heatmap);
     nextPill();
     add("i", Action::Info, true, 10);
 
-    if (a.split) {
-        for (int s = 0; s < 2; ++s)
-            addPlannerKeys(out, a, s, a.sides[s].originX, static_cast<float>(kHudH + 3), 22, 12);
+    if (a.split || a.stacked) {
+        for (int s = 0; s < static_cast<int>(a.sides.size()); ++s)
+            addPlannerKeys(out, a, s, a.sides[s].originX, a.sides[s].headerY, 22, 12);
     } else {
         float w = 0;
         for (const PlannerChoice& c : kPlanners) w += measure(c.label, kButtonText) + 2 * std::round(kButtonText * 0.8f) + 6;
@@ -360,6 +422,7 @@ void setHz(App& a, int hzIndex) {
 }
 
 void setRobots(App& a, int robots) {
+    a.robotsSet = true;
     robots = std::clamp(robots, 1, maxRobots(a));
     if (robots == a.opt.robots) return;
     a.opt.robots = robots;
@@ -377,6 +440,7 @@ void setSplit(App& a, bool split) {
     if (split == a.split) return;
     a.split = split;
     a.heatmap = split;  // on by default in split-screen
+    if (!a.robotsSet) a.opt.robots = split ? kRobotsSplit : kRobotsSingle;
     restart(a);
 }
 
@@ -540,6 +604,35 @@ double deliveriesPerMinute(const Side& s) {
     return t1 - t0 < 1.0 ? 0.0 : static_cast<double>(d1 - d0) / (t1 - t0) * 60.0;
 }
 
+// Given: both sides. Approach: compare orders served since the last
+// restart; nothing for the first kVerdictDelay seconds or before any order.
+std::string verdict(const App& a) {
+    if (a.sides.size() < 2 || a.runTime - a.runStart < kVerdictDelay) return {};
+    const double l = static_cast<double>(a.sides[0].sim->stats().deliveries);
+    const double r = static_cast<double>(a.sides[1].sim->stats().deliveries);
+    if (l + r == 0) return {};
+    const int best = r > l ? 1 : 0;
+    const double lo = std::min(l, r), hi = std::max(l, r);
+    if (lo > 0 && hi / lo <= 1.1) return "About even";
+    std::string name = plannerLabel(a.sides[best].planner);
+    if (lo == 0) return name + " is serving every order so far";
+    char line[96];
+    std::snprintf(line, sizeof line, "%s is serving %.1f\u00D7 more", name.c_str(), hi / lo);
+    return line;
+}
+
+// Given: a side. Approach: total heat is about (robots waiting per tick) /
+// (1 - decay), so heat * (1 - decay) / robots is the share of robots that
+// have been waiting lately. Bands: low < 15%, medium < 40%, high above.
+// Returns the band (0, 1, 2).
+int congestionLevel(const Side& s) {
+    float total = 0;
+    for (float h : s.heat) total += h;
+    const float robots = std::max<std::size_t>(1, s.cur.size());
+    const float waiting = total * (1 - kHeatDecay) / robots;
+    return waiting < 0.15f ? 0 : waiting < 0.40f ? 1 : 2;
+}
+
 // Given: a drop-off cell. Approach: the table it serves is the first table
 // next to it; on maps with 'S' stations the cell itself.
 Cell tableOf(const ww::Grid& g, Cell dropoff) {
@@ -679,12 +772,21 @@ void drawPill(Rectangle r, Color fill) {
     DrawRectangleRounded(r, 1.0f, 12, fill);
 }
 
-// Legend: tiny drawn icons with small brown labels on one line (the
-// heatmap entry only when it's showing). Returns the width it takes; with
-// draw = false it only measures.
-float drawLegend(float x, float y, bool heat, bool draw = true) {
+// Legend: tiny drawn icons with small brown labels on one line, or wrapped
+// to maxW (the heatmap entry only when it's showing). Returns the width of
+// the widest row; with draw = false it only measures; rows gets the count.
+float drawLegend(float x, float y, bool heat, bool draw = true, float maxW = 0, int* rows = nullptr) {
     const float start = x;
+    float widest = 0;
+    int n = 1;
     auto item = [&](auto icon, const char* label) {
+        const float w = 12 + measure(label, 12);
+        if (maxW > 0 && x > start && x + w > start + maxW) {
+            widest = std::max(widest, x - 22 - start);
+            x = start;
+            y += 18;
+            ++n;
+        }
         if (draw) {
             icon(Vector2{x, y});
             text(label, x + 12, y - 7, 12, kLine);
@@ -702,49 +804,98 @@ float drawLegend(float x, float y, bool heat, bool draw = true) {
     if (heat)
         item([&](Vector2 c) { DrawRectangleRounded({c.x - 6, c.y - 6, 12, 12}, 0.3f, 4, withAlpha(kCounter, kHeatMaxAlpha)); },
              "congestion (heatmap)");
-    return x - 22 - start;
+    if (rows) *rows = n;
+    return std::max(widest, x - 22 - start);
+}
+
+// Given: text and a width. Approach: greedy word wrap.
+std::vector<std::string> wrapText(const std::string& s, float size, float maxW) {
+    std::vector<std::string> lines;
+    std::string line, word;
+    std::istringstream in(s);
+    while (in >> word) {
+        const std::string next = line.empty() ? word : line + " " + word;
+        if (!line.empty() && measure(next, size) > maxW) {
+            lines.push_back(line);
+            line = word;
+        } else {
+            line = next;
+        }
+    }
+    if (!line.empty()) lines.push_back(line);
+    return lines;
 }
 
 // Given: the scene drawn behind. Approach: dim it, then a white card with
 // the title, what's going on, the legend, one line per planner and a Start
-// button. Any click, Space or Enter starts (see handleInput / clickAt).
+// button, all wrapped to the card's width (narrow on phones). Any click,
+// Space or Enter starts (see handleInput / clickAt).
 void drawIntro(const App& a) {
     DrawRectangle(0, 0, a.width, a.height, withAlpha(kLine, 0.28f));
-    const float w = 640, h = 316;
-    const Rectangle card{(a.width - w) / 2, (a.height - h) / 2, w, h};
-    outlinedRect(card, 12, kWhite);
-    float x = card.x + 28, y = card.y + 22;
-    text("Rush Hour Café", x, y, 24, kLine);
-    y += 38;
-    const char* story[] = {
-        "It's lunch rush. Robot waiters carry orders from the kitchen to hungry tables.",
-        "The hard part isn't one robot; it's dozens sharing narrow aisles without",
-        "colliding or getting stuck. Left and right run the same lunch with two planners.",
-    };
-    for (const char* line : story) {
-        text(line, x, y, 13, kLine);
-        y += 19;
-    }
-    y += 14;
-    drawLegend(card.x + (w - drawLegend(0, 0, true, false)) / 2 + 6, y + 6, true);
-    y += 30;
+    const float w = std::min(640.0f, a.width - 2 * margin(a)), pad = a.stacked ? 18.0f : 28.0f;
+    const float inner = w - 2 * pad, labelW = a.stacked ? 96.0f : 104.0f;
+    const std::string story = std::string("It's lunch rush. Robot waiters carry orders from the kitchen to hungry "
+                                          "tables. The hard part isn't one robot; it's dozens sharing narrow aisles "
+                                          "without colliding or getting stuck. ") +
+                              (a.stacked ? "Top and bottom" : "Left and right") +
+                              " run the same lunch with two planners.";
+    const std::vector<std::string> storyLines = wrapText(story, 13, inner);
+    int legendRows = 1;
+    const float legendW = drawLegend(0, 0, true, false, inner, &legendRows);
     const char* planners[][2] = {
         {"Local:", "each robot just avoids its neighbours"},
         {"Space-time A*:", "robots book their path in time, one by one"},
         {"CBS:", "robots are planned together, resolving conflicts"},
     };
-    for (const auto& p : planners) {
-        text(p[0], x, y, 13, kCounter);
-        text(p[1], x + 104, y, 13, kLine);
-        y += 20;
-    }
+    std::vector<std::vector<std::string>> plannerLines;
+    for (const auto& p : planners) plannerLines.push_back(wrapText(p[1], 13, inner - labelW));
     const std::string start = "Start";
     const float bw = measure(start, 14) + 36;
-    const Rectangle btn{card.x + w - 28 - bw, card.y + h - 50, bw, 28};
+    const std::string hint = "Try switching planners while it runs; the tint shows where robots wait.";
+    const std::vector<std::string> hintLines = wrapText(hint, 12, a.stacked ? inner : inner - bw - 16);
+
+    float h = 22 + 38 + storyLines.size() * 19.0f + 14 + legendRows * 18.0f + 12 + 6;
+    for (const auto& l : plannerLines) h += l.size() * 18.0f + 2;
+    h += 22 + (a.stacked ? hintLines.size() * 16.0f + 8 : 0) + 28 + 22;
+    const Rectangle card{(a.width - w) / 2, std::max(8.0f, (a.height - h) / 2), w, h};
+    outlinedRect(card, 12, kWhite);
+    float x = card.x + pad, y = card.y + 22;
+    text("Rush Hour Café", x, y, 24, kLine);
+    y += 38;
+    for (const std::string& line : storyLines) {
+        text(line, x, y, 13, kLine);
+        y += 19;
+    }
+    y += 14;
+    drawLegend(legendRows > 1 ? x + 6 : card.x + (w - legendW) / 2 + 6, y + 6, true, true, inner);
+    y += legendRows * 18.0f + 12 + 6;
+    for (std::size_t i = 0; i < plannerLines.size(); ++i) {
+        text(planners[i][0], x, y, 13, kCounter);
+        for (const std::string& line : plannerLines[i]) {
+            text(line, x + labelW, y, 13, kLine);
+            y += 18;
+        }
+        y += 2;
+    }
+    y += 22;
+    if (a.stacked) {
+        for (const std::string& line : hintLines) {
+            text(line, x, y, 12, kLineSoft);
+            y += 16;
+        }
+        y += 8;
+    }
+    const Rectangle btn{card.x + w - pad - bw, a.stacked ? y : card.y + h - 50, bw, 28};
     DrawRectangleRounded({btn.x - 1.8f, btn.y - 1.8f, btn.width + 3.6f, btn.height + 4.8f}, 0.35f, 8, kLine);
     DrawRectangleRounded(btn, 0.32f, 8, kRobot);
     text(start, btn.x + (bw - measure(start, 14)) / 2, btn.y + 6, 14, kLine);
-    text("Try switching planners while it runs; the tint shows where robots wait.", x, btn.y + 7, 12, kLineSoft);
+    if (!a.stacked) {
+        float hy = btn.y + 14 - hintLines.size() * 8.0f;
+        for (const std::string& line : hintLines) {
+            text(line, x, hy, 12, kLineSoft);
+            hy += 16;
+        }
+    }
 }
 
 // Given: one side. Approach: floor, heatmap tint, counter, tables, plants,
@@ -897,40 +1048,59 @@ void drawScene(const App& a) {
 
     // Top: "Lunch rush" panel on the left (shared clock).
     const float rush = static_cast<float>(std::fmod(a.runTime, kRushSeconds));
-    const Rectangle panel{kMargin, 9, 250, 28};
+    const Rectangle panel{margin(a), 9, a.stacked ? 230.0f : 250.0f, 28};
     outlinedRect(panel, 8, kWhite);
     text("Lunch rush", panel.x + 10, panel.y + 6, 13, kLine);
-    const Rectangle bar{panel.x + 92, panel.y + 12.5f, 104, 3};
+    const Rectangle bar{panel.x + 92, panel.y + 12.5f, panel.width - 146, 3};
     DrawRectangleRounded(bar, 1.0f, 6, kFloorB);
     DrawRectangleRounded({bar.x, bar.y, bar.width * rush / static_cast<float>(kRushSeconds), bar.height}, 1.0f, 6, kCounter);
     char clock[16];
     std::snprintf(clock, sizeof clock, "%d:%02d", static_cast<int>(rush) / 60, static_cast<int>(rush) % 60);
     text(clock, panel.x + panel.width - 10 - measure(clock, 13), panel.y + 6, 13, kLine);
 
-    // Served badge: one per side, at the right end of its header (split) or
-    // the top right (single), with orders/min and stuck beside it.
+    // Served badge: one per side, at the right end of its header (split or
+    // stacked) or the top right (single). Beside it (under it when stacked):
+    // orders/min, stuck, and a congestion readout whose swatch matches the
+    // heatmap tint, so a pale side reads as "less waiting", not "heatmap off".
     for (int side = 0; side < static_cast<int>(a.sides.size()); ++side) {
         const Side& s = a.sides[side];
+        const bool header = a.split || a.stacked;
         char served[48];
         std::snprintf(served, sizeof served, "%lld served", s.sim->stats().deliveries);
-        const float size = a.split ? 12.0f : 13.0f, bh = a.split ? 22.0f : 28.0f;
-        const float bw = measure(served, size) + (a.split ? 34 : 40);
-        const float right = a.split ? s.originX + gridPxW(a) : static_cast<float>(a.width - kMargin);
-        const Rectangle badge{right - bw, a.split ? kHudH + 3.0f : 9.0f, bw, bh};
+        const float size = header ? 12.0f : 13.0f, bh = header ? 22.0f : 28.0f;
+        const float bw = measure(served, size) + (header ? 34 : 40);
+        const float right = header ? s.originX + gridPxW(a) : static_cast<float>(a.width - kMargin);
+        const Rectangle badge{right - bw, header ? s.headerY : 9.0f, bw, bh};
         outlinedRect(badge, bh / 2, kBadge);
         drawStar({badge.x + bh / 2 + 1, badge.y + bh / 2}, bh * 0.23f, kLine);
         drawStar({badge.x + bh / 2 + 1, badge.y + bh / 2}, bh * 0.18f, kCounter);
         text(served, badge.x + bh + 2, badge.y + (bh - size) / 2 - 1, size, kLine);
+
         char rate[48];
-        if (a.split)
-            std::snprintf(rate, sizeof rate, "%.0f/min · %d stuck", deliveriesPerMinute(s), stuckCount(s));
+        if (header)
+            std::snprintf(rate, sizeof rate, "%.0f/min · %d stuck · ", deliveriesPerMinute(s), stuckCount(s));
         else
-            std::snprintf(rate, sizeof rate, "%.0f / min", deliveriesPerMinute(s));
-        text(rate, badge.x - 10 - measure(rate, 12), badge.y + (bh - 12) / 2 - 1, 12, kLineSoft);
+            std::snprintf(rate, sizeof rate, "%.0f / min · ", deliveriesPerMinute(s));
+        const int level = congestionLevel(s);
+        const char* levels[] = {"low congestion", "medium congestion", "high congestion"};
+        const float levelAlpha[] = {0.07f, 0.15f, kHeatMaxAlpha};
+        const float sw = 9, total = measure(rate, 12) + sw + 4 + measure(levels[level], 12);
+        float x = a.stacked ? s.originX : badge.x - 10 - total;
+        const float y = a.stacked ? s.headerY + 28 : badge.y + (bh - 12) / 2 - 1;
+        text(rate, x, y, 12, kLineSoft);
+        x += measure(rate, 12);
+        const Rectangle swatch{x, y + 3, sw, sw};
+        DrawRectangleRec(swatch, kFloorA);
+        DrawRectangleRec(swatch, withAlpha(kCounter, levelAlpha[level]));
+        DrawRectangleLinesEx(swatch, 1.0f, withAlpha(kLine, 0.35f));
+        text(levels[level], x + sw + 4, y, 12, kLineSoft);
     }
+    // Verdict: between the two sides (top centre when side by side).
+    if (const std::string v = verdict(a); !v.empty())
+        text(v, (a.width - measure(v, 14)) / 2, a.verdictY, 14, kLine);
     if (a.paused) text("paused", panel.x + panel.width + 12, panel.y + 7, 12, kLineSoft);
 
-    drawLegend(kMargin + 8, gridTop(a) + gridPxH(a) + kLegendH / 2.0f + 2, a.heatmap);
+    drawLegend(margin(a) + 8, a.legendY, a.heatmap, true, a.stacked ? a.width - 2 * margin(a) - 8 : 0);
 
     // Bottom pills and the planner keys (bottom right, or in side headers).
     const std::vector<Button> buttons = layoutButtons(a);
@@ -960,9 +1130,9 @@ void drawScene(const App& a) {
         const Color c = !b.enabled ? withAlpha(kLine, 0.3f) : (b.action == Action::None ? kLineSoft : kLine);
         text(b.label, tx, ty, size, hover && b.group >= 0 ? kCounter : c);
     }
-    if (a.split) {
+    if (a.split && !a.stacked) {
         const std::string keys = "S single view · H heatmap · P right planner · T paths";
-        text(keys, a.width - kMargin - measure(keys, 12), a.height - kFooterH + 14, 12, kLineSoft);
+        text(keys, a.width - kMargin - measure(keys, 12), a.footerY + 6, 12, kLineSoft);
     }
     drawHoverCard(a, hovered);
     if (a.showIntro) drawIntro(a);
@@ -974,13 +1144,19 @@ void drawScene(const App& a) {
 // size the canvas backing store at devicePixelRatio so it's crisp and set
 // its CSS size separately; mouse input is scaled back to layout pixels and
 // the font is re-rasterised when the scale changes a lot.
-void fitCanvas(const App& a) {
+void fitCanvas(App& a) {
     const double dpr = std::max(1.0, emscripten_get_device_pixel_ratio());
     const double vw = EM_ASM_DOUBLE({ return window.innerWidth; });
     const double vh = EM_ASM_DOUBLE({
         const foot = document.getElementById('foot');
         return window.innerHeight - (foot ? foot.offsetHeight : 0);
     });
+    // Portrait and narrow (a phone): stack the cafés so text stays readable.
+    const bool stacked = vw < vh && vw < 700;
+    if (stacked != a.stacked) {
+        a.stacked = stacked;
+        layoutView(a);
+    }
     const double fit = std::max(0.1, std::min(vw / a.width, vh / a.height));
     const int bw = std::max(1, static_cast<int>(std::lround(a.width * fit * dpr)));
     const int bh = std::max(1, static_cast<int>(std::lround(a.height * fit * dpr)));
@@ -1194,7 +1370,7 @@ std::string loadMap(const std::string& path) {
 [[noreturn]] void usage(int code) {
     std::cout << "usage: viewer [--robots N] [--seed S] [--hz 2|4|8|15|30|60|120] [--map FILE|cafe|warehouse]\n"
                  "              [--left P] [--right P] [--single [--planner P]]   P: local|stastar|cbs\n"
-                 "              [--no-intro] [--record OUT.gif [--frames N] [--fps N]]\n";
+                 "              [--no-intro] [--stacked] [--record OUT.gif [--frames N] [--fps N]]\n";
     std::exit(code);
 }
 
@@ -1212,7 +1388,7 @@ Options parseArgs(int argc, char** argv) {
             return *p;
         };
         try {
-            if (arg == "--robots") o.robots = std::stoi(next());
+            if (arg == "--robots") o.robots = std::stoi(next()), o.robotsSet = true;
             else if (arg == "--seed") o.seed = std::stoull(next());
             else if (arg == "--hz") {
                 const double want = std::stod(next());
@@ -1228,6 +1404,7 @@ Options parseArgs(int argc, char** argv) {
             else if (arg == "--frames") o.recordFrames = std::stoi(next());
             else if (arg == "--fps") o.recordFps = std::clamp(std::stoi(next()), 1, 50);
             else if (arg == "--no-intro") o.intro = false;
+            else if (arg == "--stacked") o.stacked = true;
             else if (arg == "-h" || arg == "--help") usage(0);
             else usage(1);
         } catch (const std::logic_error&) {
@@ -1244,6 +1421,9 @@ int main(int argc, char** argv) {
     a.opt = parseArgs(argc, argv);
     a.split = a.opt.split;
     a.heatmap = a.split;  // on by default in split-screen
+    a.stacked = a.opt.stacked;
+    a.robotsSet = a.opt.robotsSet;
+    if (!a.robotsSet && !a.split) a.opt.robots = kRobotsSingle;
     try {
         if (a.opt.mapPath.empty()) a.mapText = std::string(ww::cafeMap());
         else if (auto builtin = ww::builtinMap(a.opt.mapPath)) a.mapText = std::string(*builtin);
