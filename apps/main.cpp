@@ -2,7 +2,7 @@
 //
 //   ./warehouse                         live view, 12 robots
 //   ./warehouse --robots 20 --hz 15     more robots, faster ticks
-//   ./warehouse --map maps/small.txt    custom layout
+//   ./warehouse --map maps/small.txt    custom layout (or --map cafe)
 //   ./warehouse --headless --ticks 100000   benchmark, no drawing
 //   ./warehouse --planner stastar       space-time A* instead of local moves
 //   ./warehouse --planner cbs           conflict-based search, robots jointly
@@ -38,7 +38,7 @@ struct Options {
 
 [[noreturn]] void usage(int code) {
     std::cout << "usage: warehouse [--robots N] [--ticks N] [--hz R] [--seed S]\n"
-                 "                 [--map FILE] [--planner local|stastar|cbs] [--headless] [--no-color]\n";
+                 "                 [--map FILE|cafe|warehouse] [--planner local|stastar|cbs] [--headless] [--no-color]\n";
     std::exit(code);
 }
 
@@ -76,6 +76,7 @@ Options parseArgs(int argc, char** argv) {
 
 std::string loadMap(const std::string& path) {
     if (path.empty()) return std::string(ww::defaultMap());
+    if (auto builtin = ww::builtinMap(path)) return std::string(*builtin);
     std::ifstream in(path);
     if (!in) throw std::runtime_error("cannot open map file: " + path);
     std::stringstream ss;

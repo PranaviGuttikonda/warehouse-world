@@ -12,6 +12,8 @@ constexpr const char* kShelf = "\033[33m";
 constexpr const char* kStation = "\033[1;32m";
 constexpr const char* kEmpty = "\033[36m";
 constexpr const char* kLoaded = "\033[1;35m";
+constexpr const char* kTable = "\033[1;37m";
+constexpr const char* kPlant = "\033[32m";
 
 char robotGlyph(int id, bool carrying) {
     if (id >= 26) return carrying ? '@' : '&';
@@ -44,6 +46,8 @@ std::string renderFrame(const Simulation& sim, bool color) {
                 switch (t) {
                     case Tile::Shelf: out += kShelf; break;
                     case Tile::Station: out += kStation; break;
+                    case Tile::Table: out += kTable; break;
+                    case Tile::Plant: out += kPlant; break;
                     default: out += kDim; break;
                 }
             }

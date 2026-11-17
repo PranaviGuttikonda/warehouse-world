@@ -12,6 +12,8 @@ Tile toTile(char ch, int row, int col) {
         case '#': return Tile::Wall;
         case '=': return Tile::Shelf;
         case 'S': return Tile::Station;
+        case '0': return Tile::Table;
+        case '*': return Tile::Plant;
         default:
             throw std::invalid_argument("unknown map char '" + std::string(1, ch) +
                                         "' at row " + std::to_string(row) +
@@ -51,15 +53,17 @@ Grid Grid::parse(std::string_view ascii) {
         if (t == Tile::Station) g.stations_.push_back(c);
         if (t != Tile::Floor) continue;
         g.floor_.push_back(c);
+        bool face = false, seat = false;
         for (Cell d : kNeighbors) {
             Cell n{c.x + d.x, c.y + d.y};
-            if (g.inBounds(n) && g.at(n) == Tile::Shelf) {
-                g.pickFaces_.push_back(c);
-                break;
-            }
+            if (!g.inBounds(n)) continue;
+            face = face || g.at(n) == Tile::Shelf;
+            seat = seat || g.at(n) == Tile::Table;
         }
+        if (face) g.pickFaces_.push_back(c);
+        if (seat) g.stations_.push_back(c);
     }
-    if (g.stations_.empty()) throw std::invalid_argument("map needs at least one station 'S'");
+    if (g.stations_.empty()) throw std::invalid_argument("map needs a station 'S' or a table '0'");
     if (g.pickFaces_.empty()) throw std::invalid_argument("map needs at least one shelf '=' next to floor");
     return g;
 }
@@ -77,6 +81,28 @@ std::string_view defaultMap() {
         "#........................#\n"
         "#S......................S#\n"
         "##########################\n";
+}
+
+std::string_view cafeMap() {
+    return
+        "##########################\n"
+        "#*....==============....*#\n"
+        "#........................#\n"
+        "#........................#\n"
+        "#...0.....0....0.....0...#\n"
+        "#........................#\n"
+        "#*.....0.....**.....0...*#\n"
+        "#........................#\n"
+        "#...0.....0....0.....0...#\n"
+        "#........................#\n"
+        "#*..........**..........*#\n"
+        "##########################\n";
+}
+
+std::optional<std::string_view> builtinMap(std::string_view name) {
+    if (name == "warehouse") return defaultMap();
+    if (name == "cafe") return cafeMap();
+    return std::nullopt;
 }
 
 }  // namespace ww

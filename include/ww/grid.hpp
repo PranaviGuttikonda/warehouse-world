@@ -1,5 +1,6 @@
 #pragma once
 
+#include <optional>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -13,12 +14,14 @@ enum class Tile : char {
     Wall = '#',
     Shelf = '=',
     Station = 'S',
+    Table = '0',  // obstacle; floor cells next to it are drop-off cells
+    Plant = '*',  // obstacle
 };
 
 /// Static warehouse layout. Robots are not stored here; see Registry.
 class Grid {
 public:
-    /// Given: ASCII rows using '.', '#', '=', 'S'.
+    /// Given: ASCII rows using '.', '#', '=', 'S', '0' (table), '*' (plant).
     /// Approach: validate equal row widths, map each char to a Tile.
     /// Throws std::invalid_argument on bad input.
     static Grid parse(std::string_view ascii);
@@ -41,6 +44,7 @@ public:
     int index(Cell c) const { return c.y * width_ + c.x; }
     Cell cellAt(int idx) const { return {idx % width_, idx / width_}; }
 
+    /// Drop-off cells: 'S' tiles, and floor cells next to a table.
     const std::vector<Cell>& stations() const { return stations_; }
     /// Floor cells next to a shelf: where a robot picks up an item.
     const std::vector<Cell>& pickFaces() const { return pickFaces_; }
@@ -55,7 +59,12 @@ private:
     std::vector<Cell> floor_;
 };
 
-/// Built-in demo layout.
+/// Built-in warehouse layout (the default for benchmarks).
 std::string_view defaultMap();
+/// Built-in café layout: one kitchen counter along the top wall, round
+/// tables, potted plants.
+std::string_view cafeMap();
+/// Given: "warehouse" or "cafe". Approach: look up the built-in map.
+std::optional<std::string_view> builtinMap(std::string_view name);
 
 }  // namespace ww
