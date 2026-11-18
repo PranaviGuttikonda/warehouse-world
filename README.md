@@ -70,6 +70,13 @@ restarts both, so they stay tick for tick in step. "Compare" (or
 <kbd>S</kbd>) switches to a single café (16 robots unless you picked a
 count) and back.
 
+The robot count is capped at about 20% of the map's floor, rounded down to
+a multiple of 4 (`ww::robotCap`): 40 on the café (206 floor cells), 32 on
+the warehouse (164). Past that the café gridlocks for every planner (at 100
+robots both sides serve nothing), so at the cap "+" greys out with a
+"café is full" hint, and `--robots` above it is clamped. Robots start on
+random floor cells (seeded portable RNG), spread over the whole café.
+
 - **Verdict:** a line between the two sides, e.g. "CBS is serving 6.8×
   more" (orders served since the last restart), or "About even" within 10%.
   It appears after the first 10 seconds.

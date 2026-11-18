@@ -26,6 +26,14 @@ const char* plannerName(Planner p);
 /// Given: a CLI name. Approach: inverse of plannerName; nullopt if unknown.
 std::optional<Planner> parsePlanner(std::string_view name);
 
+/// Robot-count limits for the viewer: past ~20% of the floor the café
+/// gridlocks for every planner (100 robots on 206 cells: 0 served).
+constexpr int kRobotStep = 4;            // caps are multiples of this
+constexpr double kRobotDensity = 0.20;   // share of floor cells robots may fill
+/// Given: a map. Approach: kRobotDensity of its floor (spawnable) cells,
+/// rounded down to a multiple of kRobotStep (tiny maps: at least 1).
+int robotCap(const Grid& grid);
+
 /// Read-only snapshot of one robot, for rendering and tests.
 struct RobotView {
     int id;
