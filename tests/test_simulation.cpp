@@ -120,3 +120,32 @@ TEST(simulation_rejects_too_many_robots) {
     Grid g = Grid::parse(kCorridor);
     CHECK_THROWS(Simulation(Grid::parse(kCorridor), {static_cast<int>(g.floorCells().size()) + 1, 1}));
 }
+
+TEST(robot_cap_is_a_fifth_of_the_floor) {
+    // The viewer's max robot count is ww::robotCap: at most 20% of the
+    // floor, a multiple of the step, and not far below (>= 15%).
+    for (const char* name : {"cafe", "warehouse"}) {
+        Grid g = Grid::parse(std::string(*builtinMap(name)));
+        const int cap = robotCap(g);
+        const auto floor = static_cast<double>(g.floorCells().size());
+        CHECK(cap <= floor * kRobotDensity);
+        CHECK(cap >= floor * 0.15);
+        CHECK_EQ(cap % kRobotStep, 0);
+    }
+    CHECK_EQ(robotCap(Grid::parse(cafeMap())), 40);       // 206 floor cells
+    CHECK_EQ(robotCap(Grid::parse(defaultMap())), 32);    // 164 floor cells
+    CHECK_EQ(robotCap(Grid::parse(kCorridor)), 1);  // 4 floor cells: still one robot
+}
+
+TEST(spawns_spread_over_the_whole_floor) {
+    // Given: the café at its cap. Approach: robots start on shuffled floor
+    // cells (seeded portable RNG), so every quarter of the floor gets some.
+    Grid g = Grid::parse(cafeMap());
+    for (std::uint64_t seed = 1; seed <= 5; ++seed) {
+        Simulation sim(Grid::parse(cafeMap()), {robotCap(g), seed});
+        int quarter[4] = {0, 0, 0, 0};
+        for (const RobotView& r : sim.robots())
+            ++quarter[(r.cell.x >= g.width() / 2) + 2 * (r.cell.y >= g.height() / 2)];
+        for (int q : quarter) CHECK(q >= robotCap(g) / 8);  // at least half a fair share
+    }
+}

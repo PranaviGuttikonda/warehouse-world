@@ -295,6 +295,7 @@ void snapshot(const ww::Simulation& sim, std::vector<Cell>& into) {
 // seed and robot count, so the two planners always start from the same café
 // and orders, and stay tick for tick in step.
 void restart(App& a) {
+    a.opt.robots = std::clamp(a.opt.robots, 1, ww::robotCap(ww::Grid::parse(a.mapText)));
     a.sides.resize(a.split ? 2 : 1);
     for (std::size_t s = 0; s < a.sides.size(); ++s) {
         Side& side = a.sides[s];
@@ -333,7 +334,9 @@ struct Button {
 
 constexpr float kButtonText = 13;
 
-int maxRobots(const App& a) { return static_cast<int>(a.sides[0].sim->grid().floorCells().size()); }
+// Most robots the view allows: ww::robotCap (about 20% of the floor), past
+// which the café gridlocks and every planner shows 0 served.
+int maxRobots(const App& a) { return ww::robotCap(a.sides[0].sim->grid()); }
 
 int stuckCount(const Side& s) {
     int n = 0;
@@ -1133,6 +1136,12 @@ void drawScene(const App& a) {
     if (a.split && !a.stacked) {
         const std::string keys = "S single view · H heatmap · P right planner · T paths";
         text(keys, a.width - kMargin - measure(keys, 12), a.footerY + 6, 12, kLineSoft);
+    }
+    // At the cap "+" is greyed out; say why, after the last pill.
+    if (a.opt.robots >= maxRobots(a)) {
+        for (const Button& b : buttons)
+            if (b.action == Action::Info)
+                text("café is full", b.rect.x + b.rect.width + 12, b.rect.y + (b.rect.height - 12) / 2 - 1, 12, kCounter);
     }
     drawHoverCard(a, hovered);
     if (a.showIntro) drawIntro(a);

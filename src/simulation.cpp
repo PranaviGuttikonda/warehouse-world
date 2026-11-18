@@ -23,6 +23,12 @@ std::optional<Planner> parsePlanner(std::string_view name) {
     return std::nullopt;
 }
 
+int robotCap(const Grid& grid) {
+    const auto cells = static_cast<double>(grid.floorCells().size());
+    const int raw = static_cast<int>(cells * kRobotDensity);
+    return raw >= kRobotStep ? raw / kRobotStep * kRobotStep : std::max(1, raw);
+}
+
 Simulation::Simulation(Grid grid, Config config)
     : grid_(std::move(grid)),
       rng_(config.seed),

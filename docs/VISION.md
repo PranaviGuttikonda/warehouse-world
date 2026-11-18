@@ -58,7 +58,8 @@ small shapes with room around them, no shadows or gradients.
   "#id · going to kitchen / carrying · waited N ticks". A verdict line
   between the sides ("CBS is serving 2.4× more", or "About even") and a
   low / medium / high congestion readout next to each "served" badge.
-  Split view starts at 24 robots, single view at 16.
+  Split view starts at 24 robots, single view at 16; the count is capped
+  at about 20% of the floor (40 on the café), with "café is full" at the cap.
 - **Phones:** in portrait the two cafés stack (Local on top, CBS below),
   with the verdict between them and compact controls at the bottom.
 - **Intro card:** on launch, a white card over the dimmed, paused café:
