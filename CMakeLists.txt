@@ -60,7 +60,9 @@ if(WW_VIEWER)
   target_compile_options(viewer PRIVATE -Wall -Wextra)
   if(EMSCRIPTEN)
     set_target_properties(viewer PROPERTIES SUFFIX ".html")
-    target_link_options(viewer PRIVATE -sUSE_GLFW=3 -sALLOW_MEMORY_GROWTH=1
+    # MINIFY_HTML=0: the minifier drops the space after quoted attribute
+    # values (content="..."property=og:title), which isn't valid HTML.
+    target_link_options(viewer PRIVATE -sUSE_GLFW=3 -sALLOW_MEMORY_GROWTH=1 -sMINIFY_HTML=0
       --shell-file ${CMAKE_SOURCE_DIR}/apps/viewer_shell.html)
   endif()
 endif()
